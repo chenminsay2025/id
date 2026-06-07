@@ -11,3 +11,5 @@ data/svg-templates/
 cat10.zip
 *.zip
 Untitled
+data/_pack-tmp/
+data/*.before-*
