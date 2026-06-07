@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e \"import\\('./server/db.js'\\).then\\(m => { const db = m.openDatabase\\(\\); console.log\\('OK, table count:', db.prepare\\(\\\\\"SELECT COUNT\\(*\\) as n FROM sqlite_master WHERE type='table'\\\\\"\\).get\\(\\).n\\); console.log\\('migrations:', db.prepare\\('SELECT * FROM migrations'\\).all\\(\\)\\); db.close\\(\\); }\\).catch\\(e => console.error\\('FAIL:', e.message\\)\\)\")",
+      "Bash(timeout 5 node server/index.js)",
+      "Bash(git init *)",
+      "Bash(git config *)",
+      "Bash(git remote *)",
+      "Bash(git add *)"
+    ]
+  }
+}

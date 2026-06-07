@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>证书</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div id="cms-root"></div>
+    <div class="app">
+      <header class="toolbar editor-toolbar">
+        <div class="toolbar-section toolbar-section--cert-layout wp-cert-toolbar-row wp-cert-toolbar-row--layout">
+          <div class="wp-cert-toolbar-layout-preset">
+            <label class="wp-inline-field wp-inline-field--layout">
+              <span class="wp-inline-label">默认布局</span>
+              <select id="cms-preset-select" class="wp-select wp-select-inline"></select>
+            </label>
+          </div>
+          <span class="wp-toolbar-divider wp-toolbar-divider--layout" aria-hidden="true"></span>
+          <div class="wp-smart-layout" title="根据所选列内容与布局模板名称相似度，自动设置每行布局模式">
+            <span class="wp-smart-layout__label">智能布局</span>
+            <select id="cms-smart-layout-col" class="wp-select wp-smart-layout__col" aria-label="匹配依据列">
+              <option value="">列…</option>
+            </select>
+            <button type="button" class="button button-sm" id="cms-smart-layout-apply" disabled title="按相似度为各行设置布局模式">应用</button>
+          </div>
+        </div>
+        <div class="toolbar-section">
+          <span class="toolbar-section-label">数据</span>
+          <button class="btn" id="btn-paste" type="button">粘贴</button>
+          <button class="btn" id="btn-import-excel" type="button">导入 Excel</button>
+          <button class="btn" id="btn-clear-table" type="button" title="清空全部行数据，保留当前列结构">清空表格</button>
+          <input type="file" id="file-excel" accept=".xlsx,.xls" hidden />
+        </div>
+        <div class="toolbar-section">
+          <span class="toolbar-section-label">导出</span>
+          <button class="btn" id="btn-export-svg" type="button">SVG</button>
+          <button class="btn btn-primary" id="btn-export-pdf" type="button">PDF</button>
+          <button class="btn btn-primary" id="btn-export-batch" type="button">批量 PDF</button>
+        </div>
+        <div class="toolbar-section toolbar-section--layout-edit">
+          <span class="toolbar-section-label">布局</span>
+          <button class="btn" id="btn-clear-save" type="button" title="重置编辑框">重置编辑框</button>
+          <button class="btn" id="btn-save-as-default" type="button" title="写入出厂默认布局">设为默认</button>
+        </div>
+        <span class="status" id="status"></span>
+        <div class="toolbar-cert-url-wrap" id="cms-public-cert-link-wrap" hidden>
+          <button type="button" class="toolbar-cert-url" id="cms-public-cert-link" aria-label="点击复制前端链接"></button>
+          <button type="button" class="btn btn-sm toolbar-cert-url-edit" id="cms-public-cert-link-edit" title="自定义链接后缀">修改</button>
+        </div>
+      </header>
+
+      <div class="main">
+        <section class="panel panel-left">
+          <div class="table-wrap" id="table-wrap"></div>
+        </section>
+
+        <div
+          class="editor-split-handle"
+          id="editor-split-handle"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-valuemin="200"
+          tabindex="0"
+          title="拖动调整上下高度"
+        ></div>
+
+        <section class="panel panel-right" id="cert-preview-panel">
+          <div class="panel-header panel-header--svg">
+            <span class="panel-header-title" id="preview-panel-title">SVG 编辑</span>
+            <div class="preview-toolbar svg-chrome-toolbar" role="toolbar" aria-label="SVG 预览与图层">
+              <button type="button" class="btn btn-sm tb-btn preview-float-toggle" id="btn-preview-float-toggle" title="变为可拖拽浮动窗口">浮动</button>
+              <span class="tb-sep preview-float-sep" role="separator"></span>
+              <div class="tb-group tb-group--row-nav table-pagination preview-row-pagination" aria-label="行分页">
+                <button class="btn btn-sm tb-btn" id="btn-prev" type="button" disabled>← 上一页</button>
+                <span id="preview-index" class="table-pagination-index">- / -</span>
+                <button class="btn btn-sm tb-btn" id="btn-next" type="button" disabled>下一页 →</button>
+              </div>
+              <span class="tb-sep preview-row-nav-sep" role="separator"></span>
+              <div class="tb-group tb-group--zoom preview-zoom-controls" title="滚轮缩放；空格或中键平移">
+                <button type="button" class="btn btn-sm tb-btn" id="btn-preview-zoom-out" title="缩小">−</button>
+                <span id="preview-zoom-value" class="tb-zoom-value">100%</span>
+                <button type="button" class="btn btn-sm tb-btn" id="btn-preview-zoom-in" title="放大">+</button>
+                <button type="button" class="btn btn-sm tb-btn" id="btn-preview-zoom-fit" title="适应窗口">适应</button>
+                <button type="button" class="btn btn-sm tb-btn" id="btn-preview-zoom-reset" title="100% 并居中">1:1</button>
+                <button type="button" class="btn btn-sm tb-btn preview-pan-btn" id="btn-preview-pan" title="抓手平移">平移</button>
+              </div>
+              <span class="tb-sep" role="separator"></span>
+              <div class="tb-group tb-group--boxes" role="group" aria-label="编辑框">
+                <button type="button" class="btn btn-sm tb-btn" id="btn-add-layout-box" title="新增空白编辑框">添加编辑框</button>
+                <button type="button" class="btn btn-sm tb-btn" id="btn-copy-layout-box" title="复制选中编辑框（含 SVG 内容，Ctrl+C）">复制</button>
+                <button type="button" class="btn btn-sm tb-btn" id="btn-paste-layout-box" title="粘贴为自定义编辑框（Ctrl+V）">粘贴</button>
+                <button type="button" class="btn btn-sm tb-btn" id="btn-delete-layout-box" title="删除选中编辑框" disabled>删除编辑框</button>
+                <button type="button" class="btn btn-sm tb-btn" id="btn-rename-layout-box" title="重命名选中编辑框" disabled>重命名</button>
+              </div>
+              <span class="tb-sep" role="separator"></span>
+              <div class="tb-group tb-group--layers layout-box-toggle-group" role="group" aria-label="图层">
+                <label class="layout-box-toggle" title="显示可拖拽编辑框"><input type="checkbox" id="show-layout-boxes" /><span>编辑框</span></label>
+                <label class="layout-box-toggle" title="参考层（导出不含）"><input type="checkbox" id="show-reference-layer" /><span>参考层</span></label>
+                <label class="layout-box-toggle" title="模板底图"><input type="checkbox" id="show-template-layer" checked /><span>模板底图</span></label>
+                <span class="tb-sep preview-layer-selection-sep" role="separator"></span>
+                <span class="preview-layer-selection">
+                  <span class="tb-kicker" title="当前选中字段（与表格联动）">选中</span>
+                  <span class="preview-layer-column" id="preview-layer-column">未选择</span>
+                </span>
+              </div>
+              <span class="tb-sep" role="separator"></span>
+              <button type="button" class="btn btn-sm tb-btn" id="btn-reset-layout" title="恢复默认编辑框">恢复默认</button>
+            </div>
+          </div>
+          <div class="preview-with-panel">
+            <div class="layout-panel layout-panel--toolbar" id="layout-panel">
+              <!-- 由 layoutPanel.js 填充 -->
+            </div>
+            <div class="preview-area" id="preview-area">
+              <p style="color: var(--muted)">加载模板中…</p>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div class="paste-modal" id="paste-modal">
+      <div class="paste-dialog">
+        <h3>导入表格数据</h3>
+
+        <section class="paste-dialog__section">
+          <h4 class="paste-dialog__section-title">从 WPS / Excel 复制粘贴</h4>
+          <p class="paste-dialog__hint">在 WPS 中复制表格（含表头）后，点击下方区域并按 <kbd>Ctrl+V</kbd>。列名会与当前表格模板<strong>按表头名称匹配</strong>；WPS 图片（DISPIMG）会尝试从剪贴板解析并上传。</p>
+          <div class="paste-dialog__capture" id="paste-capture" tabindex="0" contenteditable="true" role="textbox" aria-label="粘贴 WPS 表格">点击此处后按 Ctrl+V 粘贴</div>
+          <button type="button" class="btn btn-sm" id="btn-paste-from-clipboard">聚焦粘贴区</button>
+        </section>
+
+        <div class="paste-dialog__or" aria-hidden="true">或</div>
+
+        <section class="paste-dialog__section">
+          <h4 class="paste-dialog__section-title">粘贴纯文本</h4>
+          <p class="paste-dialog__hint">仅文字/数字、无图片时使用。首行可以是表头，也可以直接是数据。</p>
+          <textarea id="paste-text" placeholder="在此粘贴纯文本数据…"></textarea>
+        </section>
+
+        <section class="paste-dialog__section paste-dialog__section--excel">
+          <h4 class="paste-dialog__section-title">导入 Excel 文件</h4>
+          <p class="paste-dialog__hint">支持 .xlsx / .xls，可解析 WPS 嵌入图片（DISPIMG）并写入图片列。</p>
+          <button type="button" class="btn" id="btn-paste-excel-file">选择 Excel 文件…</button>
+          <input type="file" id="paste-excel-file" accept=".xlsx,.xls" hidden />
+        </section>
+
+        <div class="actions">
+          <button class="btn" id="btn-paste-cancel">取消</button>
+          <button class="btn btn-primary" id="btn-paste-confirm">确认导入文本</button>
+        </div>
+      </div>
+    </div>
+
+    <dialog id="excel-import-report-dialog" class="excel-import-report-dialog">
+      <h3 class="excel-import-report-dialog__title">Excel 列对照与映射</h3>
+      <p class="excel-import-report-dialog__summary" id="excel-import-report-summary"></p>
+      <p class="excel-import-report-dialog__hint">为缺少的列选择对应的 Excel 列进行填充；右侧列出 Excel 中多出的列供对照。未映射的列将留空。</p>
+      <div class="excel-import-report-dialog__panels">
+        <div class="excel-import-report-dialog__mapping-panel">
+          <div class="excel-import-report-dialog__table-wrap">
+            <table class="excel-import-report-table excel-import-report-table--mapping">
+              <thead>
+                <tr>
+                  <th>缺少的列<br /><span class="excel-import-report-table__hint">模板有，Excel 没有</span></th>
+                  <th>使用 Excel 列<br /><span class="excel-import-report-table__hint">使用 Excel 数据填充</span></th>
+                </tr>
+              </thead>
+              <tbody id="excel-import-report-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+        <aside class="excel-import-report-dialog__extra-panel" aria-label="Excel 多余的列">
+          <div class="excel-import-report-dialog__extra-head">
+            <span class="excel-import-report-dialog__extra-title">多余的列</span>
+            <span class="excel-import-report-dialog__extra-hint">Excel 有，模板没有</span>
+          </div>
+          <ul class="excel-import-extra-list" id="excel-import-extra-list"></ul>
+        </aside>
+      </div>
+      <div class="excel-import-report-dialog__actions">
+        <button class="btn" type="button" id="excel-import-report-cancel">取消</button>
+        <button class="btn btn-primary" type="button" id="excel-import-report-confirm">确认导入</button>
+      </div>
+    </dialog>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

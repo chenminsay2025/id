@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>已发布内容</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body class="public-page">
+    <div class="public-menu-backdrop" id="public-menu-backdrop" hidden></div>
+    <div class="public-settings-backdrop" id="public-settings-backdrop" hidden></div>
+    <div class="public-pages-backdrop" id="public-pages-backdrop" hidden></div>
+    <div class="public-layout">
+      <aside class="public-list-panel" id="public-list-panel">
+        <header class="public-header">
+          <h1 id="public-list-title">已发布内容</h1>
+          <p class="public-hint">只读浏览，无编辑与发布权限。</p>
+          <input
+            type="search"
+            id="public-cert-search"
+            class="public-cert-search"
+            placeholder="搜索表格内容…"
+            autocomplete="off"
+          />
+          <p id="public-cert-search-summary" class="public-cert-search-summary" hidden aria-live="polite"></p>
+        </header>
+        <ul id="public-cert-list" class="public-cert-list"></ul>
+        <footer class="public-sidebar-footer" id="public-user-bar" hidden>
+          <button type="button" class="public-user-chip" id="public-open-account" title="账户设置">
+            <span class="public-user-avatar" id="public-user-avatar" aria-hidden="true">?</span>
+            <span class="public-user-name" id="public-user-name"></span>
+          </button>
+          <button type="button" class="btn btn-sm" id="public-logout">退出</button>
+        </footer>
+      </aside>
+      <main class="public-main">
+        <div class="public-content public-view-both">
+          <section class="public-table-panel">
+            <div class="table-wrap public-table-wrap" id="public-table-wrap"></div>
+          </section>
+          <div
+            class="public-split-handle"
+            id="public-split-handle"
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="拖动调整表格与预览高度"
+            tabindex="0"
+          ></div>
+          <section class="public-preview-panel">
+            <div class="public-main-head">
+              <div class="public-main-head-row">
+                <h2 id="public-cert-title">请选择内容</h2>
+                <div class="public-main-head-tools">
+                  <button
+                    type="button"
+                    class="public-pages-btn"
+                    id="public-pages-toggle"
+                    aria-label="打开页码列表"
+                    aria-expanded="false"
+                    aria-controls="public-pages-drawer"
+                    disabled
+                  >页码</button>
+                  <button
+                    type="button"
+                    class="public-settings-btn"
+                    id="public-settings-toggle"
+                    aria-label="打开设置"
+                    aria-expanded="false"
+                    aria-controls="public-settings-drawer"
+                  >设置</button>
+                  <button type="button" class="public-menu-btn" id="public-menu-toggle" aria-label="打开菜单" aria-expanded="false" aria-controls="public-list-panel">⋮</button>
+                </div>
+              </div>
+              <aside class="public-pages-drawer" id="public-pages-drawer" aria-hidden="true" aria-label="页码列表">
+                <header class="public-pages-drawer-head">
+                  <h3 class="public-pages-drawer-title">页码</h3>
+                  <button type="button" class="public-pages-close" id="public-pages-close" aria-label="关闭页码">×</button>
+                </header>
+                <div
+                  id="public-page-index-drawer"
+                  class="public-page-nav-index public-page-nav-index--jump public-page-nav-index--drawer"
+                  role="navigation"
+                  aria-label="页码"
+                  aria-live="polite"
+                >- / -</div>
+              </aside>
+              <aside class="public-settings-drawer" id="public-settings-drawer" aria-hidden="true" aria-label="视图与导出设置">
+                <header class="public-settings-drawer-head">
+                  <h3 class="public-settings-drawer-title">设置</h3>
+                  <button type="button" class="public-settings-close" id="public-settings-close" aria-label="关闭设置">×</button>
+                </header>
+                <div class="public-head-actions">
+                  <section class="public-settings-section">
+                    <h4 class="public-settings-section-title">视图</h4>
+                    <div class="public-view-toggle" role="tablist" aria-label="视图切换">
+                      <button type="button" class="btn btn-sm public-view-btn active" data-view="both" role="tab">全部</button>
+                      <button type="button" class="btn btn-sm public-view-btn" data-view="table" role="tab">表格</button>
+                      <button type="button" class="btn btn-sm public-view-btn" data-view="preview" role="tab">预览</button>
+                    </div>
+                  </section>
+                  <section class="public-settings-section">
+                    <h4 class="public-settings-section-title">导出</h4>
+                    <div class="public-export-controls">
+                      <button type="button" class="btn btn-sm" id="public-export-svg" disabled>导出 SVG</button>
+                      <button type="button" class="btn btn-sm btn-primary" id="public-export-pdf" disabled>导出 PDF</button>
+                      <button type="button" class="btn btn-sm btn-primary" id="public-export-batch" disabled>导出全部 PDF</button>
+                      <span class="public-export-status" id="public-export-status"></span>
+                    </div>
+                  </section>
+                  <section class="public-settings-section public-settings-section--preview-only" id="public-settings-section-layers">
+                    <h4 class="public-settings-section-title">预览层</h4>
+                    <div class="public-preview-layer-toggles">
+                      <label class="layout-box-toggle" title="显示编辑框区域（只读查看，不可拖拽修改）">
+                        <input type="checkbox" id="public-show-layout-boxes" />
+                        <span>编辑框</span>
+                      </label>
+                      <label class="layout-box-toggle" title="显示模板底图（SVG 内 g#_模板底图），关闭后仅保留填充文字便于校对">
+                        <input type="checkbox" id="public-show-template-layer" checked />
+                        <span>模板底图</span>
+                      </label>
+                    </div>
+                  </section>
+                  <section class="public-settings-section public-settings-section--preview-only">
+                    <h4 class="public-settings-section-title">缩放</h4>
+                    <div class="public-zoom-controls" title="滚轮缩放；抓手或空格/中键平移">
+                      <button type="button" class="btn btn-sm" id="public-zoom-out" title="缩小">−</button>
+                      <span id="public-zoom-value" class="preview-zoom-value">100%</span>
+                      <button type="button" class="btn btn-sm" id="public-zoom-in" title="放大">+</button>
+                      <button type="button" class="btn btn-sm" id="public-zoom-fit" title="适应窗口">适应</button>
+                      <button type="button" class="btn btn-sm" id="public-zoom-reset" title="1:1">1:1</button>
+                      <button type="button" class="btn btn-sm preview-pan-btn" id="public-pan" title="抓手平移">抓手</button>
+                      <button
+                        type="button"
+                        class="btn btn-sm public-preview-fullscreen-btn"
+                        id="public-preview-fullscreen"
+                        title="预览全屏"
+                        aria-pressed="false"
+                      >全屏</button>
+                    </div>
+                  </section>
+                </div>
+              </aside>
+            </div>
+            <div class="public-preview-frame">
+              <nav class="public-page-nav" id="public-page-nav" aria-label="翻页" hidden>
+                <button type="button" class="public-page-nav-btn public-page-nav-btn--prev" id="public-prev" disabled aria-label="上一页" title="上一页">
+                  <span class="public-page-nav-icon" aria-hidden="true">‹</span>
+                  <span class="public-page-nav-label">上一页</span>
+                </button>
+                <div class="public-page-nav-mobile-summary" aria-live="polite" aria-atomic="true">
+                  <span id="public-page-current" class="public-page-current-num">-</span><span class="public-page-current-sep">/</span><span id="public-page-total" class="public-page-total-num">-</span>
+                </div>
+                <div id="public-page-index" class="public-page-nav-index public-page-nav-index--sidebar" role="navigation" aria-label="页码" aria-live="polite">- / -</div>
+                <button type="button" class="public-page-nav-btn public-page-nav-btn--next" id="public-next" disabled aria-label="下一页" title="下一页">
+                  <span class="public-page-nav-label">下一页</span>
+                  <span class="public-page-nav-icon" aria-hidden="true">›</span>
+                </button>
+              </nav>
+              <div
+                class="public-page-nav-resize-handle"
+                id="public-page-nav-resize"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="拖动调整页码栏宽度"
+                aria-valuemin="100"
+                aria-valuemax="360"
+                tabindex="0"
+                title="拖动调整页码栏宽度"
+                hidden
+              ></div>
+              <div class="public-preview-area-host">
+                <div class="public-preview-area" id="public-preview-area">
+                  <p class="public-empty">请从上方列表选择证书</p>
+                </div>
+                <button
+                  type="button"
+                  class="btn btn-sm public-preview-fullscreen-exit"
+                  id="public-preview-fullscreen-exit"
+                  hidden
+                  aria-label="退出全屏"
+                >退出全屏</button>
+              </div>
+              <div class="public-preview-side" id="public-preview-side">
+                <aside class="public-row-card" id="public-row-card" hidden aria-label="当前页数据">
+                  <header class="public-row-card-head">
+                    <span class="public-row-card-page" id="public-row-card-page"></span>
+                    <span class="public-row-card-preset" id="public-row-card-preset" hidden></span>
+                  </header>
+                  <div class="public-row-card-fields" id="public-row-card-fields" role="list"></div>
+                </aside>
+              </div>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+    <div id="public-export-progress" class="public-export-progress" hidden aria-live="polite" aria-busy="false">
+      <div class="public-export-progress-card" role="status">
+        <div class="public-export-progress-head">
+          <strong id="public-export-progress-title" class="public-export-progress-title">正在导出 PDF</strong>
+          <span id="public-export-progress-pct" class="public-export-progress-pct">0%</span>
+        </div>
+        <div class="public-export-progress-bar" aria-hidden="true">
+          <div class="public-export-progress-fill" id="public-export-progress-fill" style="width:0%"></div>
+        </div>
+        <p id="public-export-progress-time" class="public-export-progress-time">已用时 0 秒 · 预计还需 计算中…</p>
+        <p id="public-export-progress-detail" class="public-export-progress-detail">准备中…</p>
+        <p id="public-export-progress-page" class="public-export-progress-page" hidden></p>
+        <ol id="public-export-progress-steps" class="public-export-progress-steps"></ol>
+      </div>
+    </div>
+    <script type="module" src="/src/public/main.js"></script>
+  </body>
+</html>

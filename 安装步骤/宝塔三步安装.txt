@@ -1,0 +1,26 @@
+猫咪血统证书 — PM2 发布（简明）
+
+域名：cat.meituyin.cn
+目录：/www/wwwroot/cat.meituyin.cn
+
+① 本地 npm run build → 打包上传（无 node_modules，含 dist、server、data/cat.db）
+
+② 终端
+   cd /www/wwwroot/cat.meituyin.cn
+   chown -R www:www .
+   sudo -u www npm install
+   sudo -u www npm run build
+
+③ PM2 管理器 → 添加项目
+   名称 cat-svg | 启动 server/index.js | 目录网站根 | 用户 www | 端口 3001 → 启动
+
+④ 配置
+   迁移：改 .env 里 CORS_ORIGIN=https://cat.meituyin.cn → PM2 重启
+   新机：打开 /install.html 安装 → PM2 重启
+
+⑤ 网站反代 → http://127.0.0.1:3001
+
+验证：https://cat.meituyin.cn/api/meta
+登录：https://cat.meituyin.cn/login.html
+
+更新：备份 data/cat.db → 上传新代码 → npm install && npm run build → PM2 重启

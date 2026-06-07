@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>安装</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+        background: #f0f2f5;
+        color: #1e293b;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+      .install-card {
+        width: 100%;
+        max-width: 520px;
+        background: #fff;
+        border: 1px solid #d9dee6;
+        border-radius: 12px;
+        padding: 28px 28px 24px;
+        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+      }
+      h1 { font-size: 20px; margin-bottom: 8px; }
+      .hint { font-size: 13px; color: #64748b; line-height: 1.6; margin-bottom: 20px; }
+      .steps { font-size: 12px; color: #64748b; background: #f8fafc; border-radius: 8px; padding: 12px 14px; margin-bottom: 20px; line-height: 1.7; }
+      label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; margin-bottom: 14px; }
+      input {
+        font-weight: normal;
+        padding: 10px 12px;
+        border: 1px solid #d9dee6;
+        border-radius: 8px;
+        font-size: 14px;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        padding: 11px 16px;
+        border: none;
+        border-radius: 8px;
+        background: #2563eb;
+        color: #fff;
+        font-size: 15px;
+        cursor: pointer;
+        margin-top: 6px;
+      }
+      .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+      .error { color: #b91c1c; font-size: 13px; min-height: 20px; margin-top: 8px; }
+      .log {
+        margin-top: 16px;
+        max-height: 160px;
+        overflow: auto;
+        background: #0f172a;
+        color: #e2e8f0;
+        font-family: Consolas, monospace;
+        font-size: 11px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      .ok-box {
+        margin-top: 16px;
+        padding: 14px;
+        background: #ecfdf5;
+        border: 1px solid #a7f3d0;
+        border-radius: 8px;
+        font-size: 13px;
+        line-height: 1.7;
+      }
+      .ok-box a { color: #2563eb; }
+      .status-row { font-size: 12px; color: #64748b; margin-bottom: 12px; }
+    </style>
+  </head>
+  <body>
+    <div class="install-card">
+      <h1>安装向导</h1>
+      <p class="hint">上传并解压项目后，填写网站地址即可完成安装（自动配置、安装依赖、构建前端）。</p>
+      <div class="steps">
+        ① 宝塔添加网站并绑定域名<br />
+        ② 上传压缩包到网站目录并解压<br />
+        ③ 用 PM2 启动 <code>server/index.js</code>（或先运行 <code>bash install.sh</code>）<br />
+        ④ 本页填写信息 → 安装 → 重启 PM2 → 配置反向代理
+      </div>
+      <p class="status-row" id="env-status">检测环境中…</p>
+      <form id="install-form">
+        <label>
+          网站地址
+          <input type="url" id="site-url" placeholder="https://cat.meituyin.cn" required />
+        </label>
+        <label>
+          管理员用户名
+          <input type="text" id="admin-user" value="admin" autocomplete="username" required />
+        </label>
+        <label>
+          管理员密码
+          <input type="password" id="admin-pass" minlength="6" autocomplete="new-password" required />
+        </label>
+        <label>
+          Node 端口（一般保持 3001）
+          <input type="number" id="port" value="3001" min="1024" max="65535" />
+        </label>
+        <button type="submit" class="btn" id="btn-install">开始安装</button>
+        <p class="error" id="error"></p>
+      </form>
+      <div class="log" id="log" hidden></div>
+      <div class="ok-box" id="ok-box" hidden></div>
+    </div>
+    <script>
+      const form = document.getElementById('install-form')
+      const errEl = document.getElementById('error')
+      const logEl = document.getElementById('log')
+      const okBox = document.getElementById('ok-box')
+      const btn = document.getElementById('btn-install')
+      const envStatus = document.getElementById('env-status')
+      let pollTimer = null
+
+      function setLog(lines) {
+        if (!lines?.length) return
+        logEl.hidden = false
+        logEl.textContent = lines.join('\n')
+        logEl.scrollTop = logEl.scrollHeight
+      }
+
+      async function refreshStatus() {
+        const res = await fetch('/api/install/status')
+        const data = await res.json()
+        if (data.installed) {
+          window.location.href = '/login.html'
+          return
+        }
+        const node = data.node?.ok ? `Node ${data.node.version} ✓` : `Node ${data.node?.version} ✗ 需要 ≥18`
+        envStatus.textContent = `${node} · dist ${data.hasDist ? '已有' : '待构建'}`
+        if (data.progress?.running) {
+          btn.disabled = true
+          btn.textContent = data.progress.message || '安装中…'
+          setLog(data.progress.log)
+        }
+        return data
+      }
+
+      refreshStatus()
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault()
+        errEl.textContent = ''
+        okBox.hidden = true
+        btn.disabled = true
+        btn.textContent = '正在安装…'
+        logEl.hidden = false
+        logEl.textContent = '请稍候，首次安装约 1～5 分钟…\n'
+
+        pollTimer = setInterval(async () => {
+          try {
+            const data = await refreshStatus()
+            if (data?.progress?.error) {
+              errEl.textContent = data.progress.error
+            }
+          } catch { /* ignore */ }
+        }, 1500)
+
+        try {
+          const res = await fetch('/api/install/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              siteUrl: document.getElementById('site-url').value.trim(),
+              adminUsername: document.getElementById('admin-user').value.trim(),
+              adminPassword: document.getElementById('admin-pass').value,
+              port: Number(document.getElementById('port').value) || 3001,
+            }),
+          })
+          const data = await res.json()
+          if (!res.ok) throw new Error(data.error || '安装失败')
+
+          okBox.hidden = false
+          okBox.innerHTML = `
+            <strong>安装成功</strong><br />
+            请在宝塔 <b>PM2</b> 中重启本项目，并设置 Nginx 反代到 <code>127.0.0.1:${data.port}</code>。<br />
+            配置示例见项目 <code>安装步骤/nginx-baota.conf</code><br /><br />
+            然后访问：<a href="${data.loginUrl}">${data.loginUrl}</a>
+          `
+          btn.textContent = '安装完成'
+        } catch (err) {
+          errEl.textContent = err.message || '安装失败'
+          btn.disabled = false
+          btn.textContent = '重试安装'
+        } finally {
+          clearInterval(pollTimer)
+          await refreshStatus()
+        }
+      })
+
+      if (location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+        document.getElementById('site-url').value = location.origin
+      }
+    </script>
+  </body>
+</html>

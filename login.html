@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>登录 · 猫咪血统证书</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body class="login-page">
+    <div class="login-card">
+      <h1>管理端登录</h1>
+      <p class="login-hint">单用户模式，用于编辑证书与布局预设。本地默认见 <code>.env</code>（admin / admin1234）；若安装向导设过密码请用当时密码，或运行 <code>npm run reset:admin</code>。</p>
+      <form id="login-form">
+        <label>
+          <span>用户名</span>
+          <input type="text" id="login-username" name="username" autocomplete="username" required />
+        </label>
+        <label>
+          <span>密码</span>
+          <input type="password" id="login-password" name="password" autocomplete="current-password" required />
+        </label>
+        <p class="login-error" id="login-error"></p>
+        <button type="submit" class="btn btn-primary btn-block">登录</button>
+      </form>
+      <p class="login-footer"><a href="/">前往前端</a></p>
+    </div>
+    <script type="module" src="/src/admin/login.js"></script>
+  </body>
+</html>

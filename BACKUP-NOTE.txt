@@ -1,0 +1,7 @@
+﻿Project: h:\cat6
+Created: 2026-05-31 16:42:42
+Excluded folders: node_modules, .git, dist, build, .cursor
+Database: included (shared-read snapshot)
+Skipped:
+data\cat.db-shm : 使用“4”个参数调用“CreateEntryFromFile”时发生异常:“文件“H:\cat6\data\cat.db-shm”正由另一进程使用，因此该进程无法访问此文件。”
+data\cat.db-wal : 使用“4”个参数调用“CreateEntryFromFile”时发生异常:“文件“H:\cat6\data\cat.db-wal”正由另一进程使用，因此该进程无法访问此文件。”
