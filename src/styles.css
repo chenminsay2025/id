@@ -3183,7 +3183,105 @@ body.has-wp-admin {
   color: #f1f5f9;
 }
 
-/* ???? ????????*/
+/* ---- 侧栏折叠 ---- */
+.wp-sidebar-collapse-btn {
+  position: absolute;
+  top: 12px;
+  right: -11px;
+  z-index: 20;
+  width: 22px;
+  height: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 50%;
+  background: #1e293b;
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.25s, background 0.15s, color 0.15s;
+  padding: 0;
+}
+.wp-sidebar-collapse-btn:hover {
+  background: #334155;
+  color: #f1f5f9;
+}
+
+.wp-admin-menu {
+  position: relative;
+  transition: width 0.25s ease;
+}
+.wp-admin-menu.is-collapsed {
+  width: 60px;
+  padding: 12px 8px;
+}
+.wp-admin-menu.is-collapsed .wp-sidebar-collapse-btn {
+  transform: rotate(180deg);
+}
+
+/* 折叠态 — 品牌区 */
+.wp-admin-menu.is-collapsed .wp-brand-text,
+.wp-admin-menu.is-collapsed .wp-brand-sub { display: none; }
+.wp-admin-menu.is-collapsed .wp-sidebar-brand {
+  justify-content: center;
+  padding: 4px 0 8px;
+}
+
+/* 折叠态 — 分区标题 */
+.wp-admin-menu.is-collapsed .wp-nav-section-label { display: none; }
+.wp-admin-menu.is-collapsed .wp-nav-section {
+  margin-top: 6px;
+  padding-top: 8px;
+}
+
+/* 折叠态 — 导航链接（图标化） */
+.wp-admin-menu.is-collapsed .wp-nav-link {
+  text-align: center;
+  padding: 8px 4px;
+  font-size: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.wp-admin-menu.is-collapsed .wp-nav-link::before {
+  content: attr(data-collapse-icon);
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+/* 折叠态 — 快捷操作和筛选项 */
+.wp-admin-menu.is-collapsed .wp-nav-quick-actions { display: none; }
+
+/* 折叠态 — 分隔占位保持 */
+.wp-admin-menu.is-collapsed .wp-sidebar-spacer { min-height: 4px; }
+
+/* 折叠态 — 底部用户区 */
+.wp-admin-menu.is-collapsed .wp-user-text,
+.wp-admin-menu.is-collapsed .wp-user-account-hint { display: none; }
+.wp-admin-menu.is-collapsed .wp-user-chip--account {
+  justify-content: center;
+  padding: 8px;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  margin: 0 auto;
+}
+.wp-admin-menu.is-collapsed .wp-user-chip--account .wp-user-avatar {
+  width: 28px;
+  height: 28px;
+}
+.wp-admin-menu.is-collapsed .wp-btn-ghost {
+  text-align: center;
+  font-size: 0;
+  padding: 8px 4px;
+}
+.wp-admin-menu.is-collapsed .wp-btn-ghost::before {
+  content: '⏻';
+  font-size: 16px;
+}
+
+/* ---- 管理内容 ---- */
 .wp-admin-content {
   flex: 1;
   min-width: 0;

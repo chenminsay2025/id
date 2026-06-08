@@ -18,7 +18,7 @@ import {
   computeResizedGroupBounds,
   ensureSelectionMinBoxSizes,
 } from './layoutBoxOps.js'
-import { duplicateLayoutBoxesAtOffset } from './layoutBoxClipboard.js'
+import { duplicateLayoutBoxesAtOffset, hasLayoutBoxClipboard } from './layoutBoxClipboard.js'
 const KEY_NUDGE_STEP = 0.5
 const KEY_NUDGE_STEP_SHIFT = 2
 const KEY_NUDGE_DEBOUNCE_MS = 500
@@ -610,12 +610,33 @@ export function mountLayoutEditor(stage, svgEl, options) {
   }
 
   function showBoxContextMenu(boxId, clientX, clientY) {
-    if (readOnly || typeof options.onDeleteBoxes !== 'function') return
-    if (isAuxBox(boxId) && options.auxiliaryBox?.noDelete) return
+    if (readOnly) return
+    if (isAuxBox(boxId) && options.auxiliaryBox?.noDelete && options.auxiliaryBox?.noCopy) return
     hideBoxContextMenu()
+
+    const canCopy = typeof options.onCopyBox === 'function'
+      && !(isAuxBox(boxId) && options.auxiliaryBox?.noCopy)
+    const canPaste = typeof options.onPasteBox === 'function'
+      && hasLayoutBoxClipboard()
+    const canDelete = typeof options.onDeleteBoxes === 'function'
+      && !(isAuxBox(boxId) && options.auxiliaryBox?.noDelete)
+
+    if (!canCopy && !canPaste && !canDelete) return
+
+    const buttons = []
+    if (canCopy) {
+      buttons.push('<button type="button" data-action="copy">复制编辑框</button>')
+    }
+    if (canPaste) {
+      buttons.push('<button type="button" data-action="paste">粘贴编辑框</button>')
+    }
+    if (canDelete) {
+      buttons.push('<button type="button" data-action="delete">删除编辑框</button>')
+    }
+
     boxContextMenuEl = document.createElement('div')
     boxContextMenuEl.className = 'layout-box-context-menu'
-    boxContextMenuEl.innerHTML = '<button type="button" data-action="delete">删除编辑框</button>'
+    boxContextMenuEl.innerHTML = buttons.join('')
     boxContextMenuEl.style.left = `${clientX}px`
     boxContextMenuEl.style.top = `${clientY}px`
     document.body.appendChild(boxContextMenuEl)
@@ -626,9 +647,67 @@ export function mountLayoutEditor(stage, svgEl, options) {
     if (rect.bottom > window.innerHeight - 8) {
       boxContextMenuEl.style.top = `${Math.max(8, clientY - rect.height)}px`
     }
+    boxContextMenuEl.querySelector('[data-action="copy"]')?.addEventListener('click', () => {
+      hideBoxContextMenu()
+      options.onCopyBox?.([boxId])
+    })
+    boxContextMenuEl.querySelector('[data-action="paste"]')?.addEventListener('click', () => {
+      hideBoxContextMenu()
+      options.onPasteBox?.()
+    })
     boxContextMenuEl.querySelector('[data-action="delete"]')?.addEventListener('click', () => {
       hideBoxContextMenu()
       options.onDeleteBoxes?.([boxId])
+    })
+  }
+
+  let canvasContextMenuEl = null
+
+  function hideCanvasContextMenu() {
+    if (canvasContextMenuEl) {
+      canvasContextMenuEl.remove()
+      canvasContextMenuEl = null
+    }
+  }
+
+  function showCanvasContextMenu(clientX, clientY) {
+    if (readOnly) return
+    hideAllContextMenus()
+
+    const canPaste = typeof options.onPasteBox === 'function' && hasLayoutBoxClipboard()
+    const canSelectAll = boxes.size > 0
+
+    if (!canPaste && !canSelectAll) return
+
+    const buttons = []
+    if (canPaste) {
+      buttons.push('<button type="button" data-action="paste">粘贴编辑框</button>')
+    }
+    if (canSelectAll) {
+      buttons.push('<button type="button" data-action="select-all">全选编辑框</button>')
+    }
+
+    canvasContextMenuEl = document.createElement('div')
+    canvasContextMenuEl.className = 'layout-box-context-menu layout-canvas-context-menu'
+    canvasContextMenuEl.innerHTML = buttons.join('')
+    canvasContextMenuEl.style.left = `${clientX}px`
+    canvasContextMenuEl.style.top = `${clientY}px`
+    document.body.appendChild(canvasContextMenuEl)
+    const rect = canvasContextMenuEl.getBoundingClientRect()
+    if (rect.right > window.innerWidth - 8) {
+      canvasContextMenuEl.style.left = `${Math.max(8, clientX - rect.width)}px`
+    }
+    if (rect.bottom > window.innerHeight - 8) {
+      canvasContextMenuEl.style.top = `${Math.max(8, clientY - rect.height)}px`
+    }
+    canvasContextMenuEl.querySelector('[data-action="paste"]')?.addEventListener('click', () => {
+      hideCanvasContextMenu()
+      options.onPasteBox?.()
+    })
+    canvasContextMenuEl.querySelector('[data-action="select-all"]')?.addEventListener('click', () => {
+      hideCanvasContextMenu()
+      const all = [...boxes.keys()]
+      if (all.length) setSelected(all)
     })
   }
 
@@ -779,6 +858,10 @@ export function mountLayoutEditor(stage, svgEl, options) {
     }
     pendingSelectionSyncTable = syncTable
     updateGroupBox()
+    // 选择编辑框时将焦点从表格等"外来区域"移出，确保后续复制/粘贴快捷键不被 isForeignShortcutTarget 拦截
+    if (selectedColumns.size > 0 && document.activeElement?.closest?.('#table-wrap, #tbl-tpl-table-wrap, .table-templates-panel')) {
+      document.activeElement.blur()
+    }
   }
 
   function clearSelection({ syncTable = true, notify = true } = {}) {
@@ -1431,6 +1514,25 @@ export function mountLayoutEditor(stage, svgEl, options) {
   groupBox.addEventListener('pointerup', endDrag)
   groupBox.addEventListener('pointercancel', endDrag)
 
+  // 画板（空白区）右键菜单：粘贴、全选
+  // 注意：overlay 本身 pointer-events:none，右键空白区会穿透到 stage
+  const onCanvasContextMenu = (e) => {
+    if (readOnly) return
+    if (e.target.closest('.layout-box, .layout-group-box')) return
+    e.preventDefault()
+    e.stopPropagation()
+    showCanvasContextMenu(e.clientX, e.clientY)
+  }
+  stage.addEventListener('contextmenu', onCanvasContextMenu)
+  marqueeRoot !== stage && marqueeRoot.addEventListener('contextmenu', onCanvasContextMenu)
+  groupBox.addEventListener('contextmenu', (e) => {
+    // 多选框的右键也走画板菜单（无独立操作）
+    if (readOnly) return
+    e.preventDefault()
+    e.stopPropagation()
+    showCanvasContextMenu(e.clientX, e.clientY)
+  })
+
   wireBoxLabel = (label, boxId) => {
     if (readOnly) return
 
@@ -1687,13 +1789,18 @@ export function mountLayoutEditor(stage, svgEl, options) {
 
   function onDocumentKeydown(e) {
     if (e.key === 'Escape') {
-      hideBoxContextMenu()
+      hideAllContextMenus()
       if (propertyPickState) cancelPropertyPick()
     }
   }
 
+  function hideAllContextMenus() {
+    hideBoxContextMenu()
+    hideCanvasContextMenu()
+  }
+
   document.addEventListener('keydown', onKeyDown, true)
-  document.addEventListener('click', hideBoxContextMenu)
+  document.addEventListener('click', hideAllContextMenus)
   document.addEventListener('keydown', onDocumentKeydown)
 
   let repositionRaf = 0
@@ -1712,11 +1819,11 @@ export function mountLayoutEditor(stage, svgEl, options) {
   return {
     destroy() {
       commitPendingKeyboardNudge()
-      hideBoxContextMenu()
+      hideAllContextMenus()
       clearTimeout(selectionNotifyTimer)
       if (repositionRaf) cancelAnimationFrame(repositionRaf)
       document.removeEventListener('keydown', onKeyDown, true)
-      document.removeEventListener('click', hideBoxContextMenu)
+      document.removeEventListener('click', hideAllContextMenus)
       document.removeEventListener('keydown', onDocumentKeydown)
       resizeObserver.disconnect()
       teardownDragCopyListeners()

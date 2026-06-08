@@ -457,7 +457,8 @@ export function mountCmsBar(root, options) {
   root.innerHTML = `
     <div class="wp-admin-shell">
       <div class="wp-admin-layout">
-        <aside class="wp-admin-menu" aria-label="管理菜单">
+        <aside class="wp-admin-menu" aria-label="管理菜单" id="wp-admin-menu">
+          <button type="button" class="wp-sidebar-collapse-btn" id="wp-sidebar-collapse-btn" title="收起/展开侧栏" aria-label="收起侧栏">◀</button>
           <div class="wp-sidebar-brand">
             <span class="wp-brand-mark" id="cms-brand-mark" aria-hidden="true">${escapeHtml(siteCfg().brandMark)}</span>
             <div class="wp-brand-text">
@@ -469,12 +470,12 @@ export function mountCmsBar(root, options) {
           <nav class="wp-sidebar-nav" aria-label="功能导航">
             <div class="wp-nav-section wp-nav-section--overview">
               <span class="wp-nav-section-label">系统</span>
-              <button type="button" class="wp-nav-link" data-view="overview">概览</button>
+              <button type="button" class="wp-nav-link" data-view="overview" data-collapse-icon="📊">概览</button>
             </div>
 
             <div class="wp-nav-section wp-nav-section--content">
               <span class="wp-nav-section-label" id="cms-nav-entity-list-label" data-site-text="entityList">${escapeHtml(siteText('entityList'))}</span>
-              <button type="button" class="wp-nav-link" data-view="list" data-cert-filter="all">查看全部</button>
+              <button type="button" class="wp-nav-link" data-view="list" data-cert-filter="all" data-collapse-icon="📋">查看全部</button>
               <div class="wp-nav-quick-actions">
                 <button type="button" class="wp-nav-quick-btn cms-cert-new-trigger" data-site-text="newEntity">${escapeHtml(siteText('newEntity'))}</button>
                 <div class="wp-nav-filter-group" role="tablist" aria-label="证书筛选">
@@ -487,22 +488,22 @@ export function mountCmsBar(root, options) {
 
             <div class="wp-nav-section" id="cms-nav-templates">
               <span class="wp-nav-section-label">模板</span>
-              <button type="button" class="wp-nav-link" data-view="templates" data-module="templates">SVG 模板库</button>
-              <button type="button" class="wp-nav-link" data-view="table-templates" data-module="table-templates">表格模板库</button>
-              <button type="button" class="wp-nav-link" data-view="layout-presets" data-module="layout-presets">布局模板库</button>
+              <button type="button" class="wp-nav-link" data-view="templates" data-module="templates" data-collapse-icon="🎨">SVG 模板库</button>
+              <button type="button" class="wp-nav-link" data-view="table-templates" data-module="table-templates" data-collapse-icon="📐">表格模板库</button>
+              <button type="button" class="wp-nav-link" data-view="layout-presets" data-module="layout-presets" data-collapse-icon="📏">布局模板库</button>
             </div>
 
             <div class="wp-nav-section" id="cms-nav-settings">
               <span class="wp-nav-section-label">设置</span>
-              <button type="button" class="wp-nav-link" data-view="site" data-module="site">站点设置</button>
-              <button type="button" class="wp-nav-link" data-view="fonts" data-module="fonts">字体源</button>
-              <button type="button" class="wp-nav-link" data-view="maintenance" data-module="maintenance">数据维护</button>
-              <button type="button" class="wp-nav-link" data-view="access" data-module="access">权限管理</button>
+              <button type="button" class="wp-nav-link" data-view="site" data-module="site" data-collapse-icon="⚙️">站点设置</button>
+              <button type="button" class="wp-nav-link" data-view="fonts" data-module="fonts" data-collapse-icon="🔤">字体源</button>
+              <button type="button" class="wp-nav-link" data-view="maintenance" data-module="maintenance" data-collapse-icon="🗄️">数据维护</button>
+              <button type="button" class="wp-nav-link" data-view="access" data-module="access" data-collapse-icon="🔐">权限管理</button>
             </div>
 
             <div class="wp-nav-section">
               <span class="wp-nav-section-label">快速访问</span>
-              <a class="wp-nav-link wp-nav-external" href="/" target="_blank" rel="noopener">前端 ↗</a>
+              <a class="wp-nav-link wp-nav-external" href="/" target="_blank" rel="noopener" data-collapse-icon="🌐">前端 ↗</a>
             </div>
           </nav>
 
@@ -2899,6 +2900,27 @@ export function mountCmsBar(root, options) {
   root.querySelector('#cms-open-account')?.addEventListener('click', () => {
     accountCenter.open()
   })
+
+  // ---- 侧栏折叠 ----
+  const COLLAPSE_STORAGE_KEY = 'cat5-admin-sidebar-collapsed'
+  const sidebarEl = root.querySelector('#wp-admin-menu')
+  const collapseBtn = root.querySelector('#wp-sidebar-collapse-btn')
+  function setSidebarCollapsed(collapsed) {
+    sidebarEl?.classList.toggle('is-collapsed', collapsed)
+    if (collapseBtn) {
+      collapseBtn.setAttribute('aria-label', collapsed ? '展开侧栏' : '收起侧栏')
+      collapseBtn.innerHTML = collapsed ? '▶' : '◀'
+    }
+    try { localStorage.setItem(COLLAPSE_STORAGE_KEY, collapsed ? '1' : '0') } catch { /* ignore */ }
+  }
+  collapseBtn?.addEventListener('click', () => {
+    const next = !sidebarEl?.classList.contains('is-collapsed')
+    setSidebarCollapsed(next)
+  })
+  // 恢复上次状态
+  try {
+    if (localStorage.getItem(COLLAPSE_STORAGE_KEY) === '1') setSidebarCollapsed(true)
+  } catch { /* ignore */ }
 
   root.querySelectorAll('.wp-nav-link[data-view]').forEach((btn) => {
     btn.addEventListener('click', () => {
