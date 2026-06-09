@@ -8778,6 +8778,18 @@ body.tbl-tpl-col-dragging .tbl-tpl-col-grip {
 .fonts-tag--local { color: #047857; background: #d1fae5; }
 .fonts-tag--path { color: #6d28d9; background: #ede9fe; }
 
+/* 环境匹配标识 */
+.fonts-env-badge {
+  font-size: 12px;
+  line-height: 1;
+  flex-shrink: 0;
+  opacity: 0.7;
+  cursor: help;
+}
+.fonts-url-entry.is-env-match .fonts-env-badge {
+  opacity: 1;
+}
+
 .fonts-url-entry .font-url {
   min-width: 0;
   padding: 7px 10px;

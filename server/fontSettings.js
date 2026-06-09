@@ -8,23 +8,18 @@ export const DEFAULT_FONT_CDN = 'https://qiniu.uzzon.cn/fonts/SourceHanSansCN-Me
 
 export function defaultFontConfig() {
   return {
-    activeId: 'qiniu-default',
+    activeId: 'default-source',
     sources: [
       {
-        id: 'qiniu-default',
-        label: '七牛 CDN',
+        id: 'default-source',
+        label: '思源黑体 CN Medium',
         url: DEFAULT_FONT_CDN,
-        urls: [{ url: DEFAULT_FONT_CDN, enabled: true }],
+        urls: [
+          { url: DEFAULT_FONT_CDN, enabled: true },
+          { url: '/font/SourceHanSansCN-Medium.ttf', enabled: false },
+        ],
         enabled: true,
-        legacyIds: [],
-      },
-      {
-        id: 'site-font',
-        label: '网站根目录 /font',
-        url: '/font/SourceHanSansCN-Medium.ttf',
-        urls: [{ url: '/font/SourceHanSansCN-Medium.ttf', enabled: true }],
-        enabled: true,
-        legacyIds: [],
+        legacyIds: ['qiniu-default', 'site-font'],
       },
     ],
   }
@@ -46,6 +41,38 @@ function normalizeFontUrlEntries(raw) {
     if (single) entries.push({ url: single, enabled: true })
   }
   return entries
+}
+
+/** 判断当前是否为生产/服务器环境 */
+function isProductionEnv() {
+  return process.env.NODE_ENV === 'production'
+}
+
+/** 检测字体 URL 类型：cdn（CDN 外链）/ local（本地路径）/ path（其他） */
+function detectFontUrlType(url) {
+  const trimmed = String(url || '').trim()
+  if (/^https?:\/\//i.test(trimmed)) return 'cdn'
+  if (trimmed.startsWith('/') || trimmed.startsWith('./') || trimmed.startsWith('../')) return 'local'
+  return 'path'
+}
+
+/**
+ * 根据当前环境重排 URL 顺序：本地环境优先本地路径，生产环境优先 CDN 路径。
+ * 每个字体源同时保存了本地和 CDN 地址时，系统自动选择与环境匹配的地址。
+ */
+function reorderUrlsForEnv(entries) {
+  if (!entries.length) return entries
+  const preferredType = isProductionEnv() ? 'cdn' : 'local'
+  const preferred = []
+  const others = []
+  for (const entry of entries) {
+    if (detectFontUrlType(entry.url) === preferredType) {
+      preferred.push(entry)
+    } else {
+      others.push(entry)
+    }
+  }
+  return [...preferred, ...others]
 }
 
 /** @param {{ url: string, enabled?: boolean }[]} entries */
@@ -252,7 +279,13 @@ export function getActiveFontSource(db) {
   if (!active?.url) {
     return { id: null, label: '默认 CDN', url: DEFAULT_FONT_CDN }
   }
-  return active
+  // 环境感知：从 urls 中选择最适合当前环境的地址
+  const urls = active.urls?.length
+    ? active.urls
+    : [{ url: active.url, enabled: true }]
+  const reordered = enforceSingleEnabledUrlPerSource(reorderUrlsForEnv(urls))
+  const envUrl = reordered.find((u) => u.enabled)?.url || reordered[0]?.url || active.url
+  return { ...active, url: envUrl }
 }
 
 export function getActiveFontUrl(db) {
@@ -269,18 +302,23 @@ export function getPublicFontCatalog(db) {
   const config = getFontConfig(db)
   const sources = config.sources
     .filter((s) => s.enabled && s.url)
-    .map((s) => ({
-      id: s.id,
-      label: s.label,
-      url: s.url,
-      urls: enforceSingleEnabledUrlPerSource(s.urls || [{ url: s.url, enabled: true }]).map((entry) => ({
-        url: entry.url,
-        enabled: entry.enabled !== false,
-      })),
-      legacyIds: s.legacyIds || [],
-      cssFamily: cssFamilyForSourceId(s.id),
-      enabled: true,
-    }))
+    .map((s) => {
+      // 环境感知：重排 URL 顺序，使当前环境匹配的地址排在前面并启用
+      const rawUrls = s.urls?.length ? s.urls : [{ url: s.url, enabled: true }]
+      const envUrls = enforceSingleEnabledUrlPerSource(reorderUrlsForEnv(rawUrls))
+      return {
+        id: s.id,
+        label: s.label,
+        url: envUrls.find((u) => u.enabled)?.url || envUrls[0]?.url || s.url,
+        urls: envUrls.map((entry) => ({
+          url: entry.url,
+          enabled: entry.enabled !== false,
+        })),
+        legacyIds: s.legacyIds || [],
+        cssFamily: cssFamilyForSourceId(s.id),
+        enabled: true,
+      }
+    })
   const active = getActiveFontSource(db)
   const defaultSourceId = sources.some((s) => s.id === config.activeId)
     ? config.activeId

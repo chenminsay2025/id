@@ -10,7 +10,7 @@ export function mountFontsPanel(container) {
       <header class="wp-settings-header fonts-panel-header">
         <div>
           <h2 class="wp-settings-title">字体源</h2>
-          <p class="wp-settings-desc">CDN 外链或本地 <code>/font</code> 路径</p>
+          <p class="wp-settings-desc" id="font-env-hint">CDN 外链或本地 <code>/font</code> 路径 — 加载中…</p>
         </div>
         <button type="button" class="button button-primary button-sm" id="font-save">保存</button>
       </header>
@@ -381,6 +381,25 @@ export function mountFontsPanel(container) {
     return { label: '路径', className: 'fonts-tag--path' }
   }
 
+  /** 检测当前是否为本地开发环境 */
+  function isLocalDev() {
+    const host = window.location.hostname || ''
+    return host === 'localhost' || host === '127.0.0.1' || host.startsWith('192.168.')
+      || host.startsWith('10.') || host.startsWith('172.')
+  }
+
+  /** 返回当前环境下会被优先使用的 URL 类型 */
+  function envPreferredUrlType() {
+    return isLocalDev() ? 'local' : 'cdn'
+  }
+
+  function detectFontUrlType(url) {
+    const raw = String(url || '').trim()
+    if (/^https?:\/\//i.test(raw)) return 'cdn'
+    if (raw.startsWith('/') || raw.startsWith('./') || raw.startsWith('../')) return 'local'
+    return 'path'
+  }
+
   function testStateKey(sourceId, url) {
     return `${sourceId}::${String(url || '').trim()}`
   }
@@ -434,12 +453,17 @@ export function mountFontsPanel(container) {
   function renderUrlEntries(sourceId, urls) {
     const entries = urls.length ? urls : [{ url: '', enabled: true }]
     const groupName = `font-url-${sourceId}`
+    const envType = envPreferredUrlType()
     return entries.map((entry) => {
       const kind = urlKindMeta(entry.url)
+      const matchesEnv = detectFontUrlType(entry.url) === envType
+      const envBadge = matchesEnv
+        ? `<span class="fonts-env-badge" title="当前环境（${isLocalDev() ? '本地开发' : '服务器生产'}）优先使用此类型地址">🌐</span>`
+        : ''
       return `
-      <div class="fonts-url-entry${entry.enabled ? ' is-active' : ''}">
+      <div class="fonts-url-entry${entry.enabled ? ' is-active' : ''}${matchesEnv ? ' is-env-match' : ''}">
         <input type="radio" class="font-url-enabled" name="${escapeHtml(groupName)}" ${entry.enabled ? 'checked' : ''} title="当前地址" />
-        <span class="fonts-tag ${kind.className}">${kind.label}</span>
+        <span class="fonts-tag ${kind.className}">${kind.label}</span>${envBadge}
         <input type="text" class="font-url" value="${escapeHtml(entry.url)}" list="font-url-suggestions" placeholder="https://… 或 /font/…" spellcheck="false" />
         ${renderTestBadge(sourceId, entry.url)}
         <div class="fonts-entry-act">
@@ -852,10 +876,21 @@ export function mountFontsPanel(container) {
     saveConfig().catch((err) => setStatus(err.message || '保存失败', 'error'))
   })
 
+  /** 更新环境提示 */
+  function updateEnvHint() {
+    const hintEl = container.querySelector('#font-env-hint')
+    if (!hintEl) return
+    const envLabel = isLocalDev() ? '本地开发环境' : '服务器生产环境'
+    const prefType = envPreferredUrlType()
+    const prefLabel = prefType === 'local' ? '本地路径（/font/…）' : 'CDN 外链（https://…）'
+    hintEl.innerHTML = `当前为 <strong>${envLabel}</strong>，自动优先使用 ${prefLabel}`
+  }
+
   return {
     async init() {
       try {
         await loadConfig()
+        updateEnvHint()
       } catch (err) {
         setStatus(err.message || '加载失败', 'error')
       }
