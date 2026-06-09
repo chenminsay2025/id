@@ -6,7 +6,15 @@
       "Bash(git init *)",
       "Bash(git config *)",
       "Bash(git remote *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit -m 'feat: 猫咪血统证书生成器 v1.0 *)",
+      "Bash(git branch *)",
+      "Bash(git push *)",
+      "Bash(git rm *)",
+      "Bash(git commit *)",
+      "Bash(npx eslint *)",
+      "Bash(Select-Object -First 30)",
+      "Bash(git checkout *)"
     ]
   }
 }
