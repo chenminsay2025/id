@@ -153,6 +153,12 @@ let certLoadRunner = false
 let preloadTimer = 0
 /** @type {Map<string, SVGSVGElement>} */
 const rowSvgCache = new Map()
+/** @type {Map<number, string>} */
+const publicTemplateSvgCache = new Map()
+/** @type {Map<number, Promise<string>>} */
+const publicTemplateSvgLoads = new Map()
+/** @type {number | null} 当前预览区已加载的 SVG 模板 ID */
+let loadedTemplateSvgId = null
 /** @type {ReturnType<typeof mountSpreadsheetTable> | null} */
 let spreadsheet = null
 /** @type {ReturnType<typeof mountLayoutEditor> | null} */
@@ -201,6 +207,58 @@ function getFillOptions(overrides = {}) {
     pageWidthMm,
     pageHeightMm,
     ...overrides,
+  }
+}
+
+async function loadPublicTemplateSvgContent(templateId) {
+  const numId = Number(templateId)
+  if (!numId) return EMPTY_SVG_TEMPLATE
+  if (publicTemplateSvgCache.has(numId)) return publicTemplateSvgCache.get(numId)
+
+  let pending = publicTemplateSvgLoads.get(numId)
+  if (!pending) {
+    pending = api.getPublicTemplateFile(numId).then((text) => {
+      const svg = text?.includes('<svg') ? text : EMPTY_SVG_TEMPLATE
+      publicTemplateSvgCache.set(numId, svg)
+      publicTemplateSvgLoads.delete(numId)
+      return svg
+    }).catch((err) => {
+      publicTemplateSvgLoads.delete(numId)
+      console.warn('[public] SVG 模板加载失败', numId, err)
+      const fallback = EMPTY_SVG_TEMPLATE
+      publicTemplateSvgCache.set(numId, fallback)
+      return fallback
+    })
+    publicTemplateSvgLoads.set(numId, pending)
+  }
+  return pending
+}
+
+function collectCertificateTemplateIds(certificate) {
+  const ids = new Set()
+  const tid = certificate?.template_id
+  if (tid) ids.add(Number(tid))
+  for (const bundle of Object.values(certificate?.preset_bundles || {})) {
+    if (bundle?.svg_template_id) ids.add(Number(bundle.svg_template_id))
+  }
+  return [...ids].filter((id) => Number.isFinite(id) && id > 0)
+}
+
+function resolveTemplateIdForRow(rowIndex) {
+  const presetId = resolveRowPresetId(rowIndex)
+  const bundle = getPresetBundle(presetId)
+  if (bundle?.svg_template_id) return Number(bundle.svg_template_id)
+  if (currentCert?.template_id) return Number(currentCert.template_id)
+  return null
+}
+
+function preloadCertificateTemplateSvgs(certificate, { prioritizeId = null } = {}) {
+  const ids = collectCertificateTemplateIds(certificate)
+  const order = prioritizeId && ids.includes(prioritizeId)
+    ? [prioritizeId, ...ids.filter((id) => id !== prioritizeId)]
+    : ids
+  for (const id of order) {
+    void loadPublicTemplateSvgContent(id)
   }
 }
 
@@ -311,7 +369,7 @@ function scheduleSelectRow(rowIndex, options = {}, onSettled) {
 
   const keepColumn = options.keepColumn ?? false
   const idx = Math.max(0, Math.min(rowIndex, rows.length - 1))
-  applyRenderContextForRow(idx)
+  applyRowRenderMetadata(idx)
   selectedRow = idx
   if (!keepColumn) {
     selectedCol = -1
@@ -342,7 +400,7 @@ async function finishSelectRow(idx, gen, _options, onSettled) {
       return
     }
 
-    setPreviewLoadingMessage(catalogFontsLoaded ? '正在渲染预览…' : '正在渲染预览（字体加载中）…')
+    setPreviewLoadingMessage(catalogFontsLoaded ? '正在加载预览…' : '正在加载预览（字体加载中）…')
 
     const svgEl = await buildSvgForRow(idx, gen)
     if (gen !== switchGeneration || !svgEl) return
@@ -403,14 +461,13 @@ function scrollActivePageIntoView(behavior = 'instant') {
   }
 }
 
-/** @returns {boolean} 是否切换了渲染上下文 */
-function applyRenderContextForRow(rowIndex) {
+/** @returns {boolean} 是否切换了行级渲染元数据 */
+function applyRowRenderMetadata(rowIndex) {
   const presetId = resolveRowPresetId(rowIndex)
   if (presetId === activeRenderPresetId) return false
 
   const bundle = getPresetBundle(presetId)
   if (bundle) {
-    if (bundle.template_svg) templateSvg = bundle.template_svg
     if (bundle.page_width_mm && bundle.page_height_mm) {
       pageWidthMm = bundle.page_width_mm
       pageHeightMm = bundle.page_height_mm
@@ -431,6 +488,46 @@ function applyRenderContextForRow(rowIndex) {
   }
   activeRenderPresetId = presetId
   return true
+}
+
+async function ensureRowTemplateSvg(rowIndex, switchGen) {
+  const presetId = resolveRowPresetId(rowIndex)
+  const bundle = getPresetBundle(presetId)
+  const templateId = bundle?.svg_template_id ?? currentCert?.template_id ?? null
+
+  if (bundle?.template_svg) {
+    templateSvg = bundle.template_svg
+    loadedTemplateSvgId = templateId != null ? Number(templateId) : null
+    if (loadedTemplateSvgId) publicTemplateSvgCache.set(loadedTemplateSvgId, bundle.template_svg)
+    return true
+  }
+
+  if (
+    templateId
+    && loadedTemplateSvgId === Number(templateId)
+    && templateSvg
+    && templateSvg !== EMPTY_SVG_TEMPLATE
+  ) {
+    return true
+  }
+
+  if (switchGen != null && switchGen !== switchGeneration) return false
+
+  if (templateId) {
+    templateSvg = await loadPublicTemplateSvgContent(templateId)
+    loadedTemplateSvgId = Number(templateId)
+    if (switchGen != null && switchGen !== switchGeneration) return false
+    return true
+  }
+
+  templateSvg = EMPTY_SVG_TEMPLATE
+  loadedTemplateSvgId = null
+  return true
+}
+
+/** @returns {boolean} */
+function applyRenderContextForRow(rowIndex) {
+  return applyRowRenderMetadata(rowIndex)
 }
 
 function getActiveSvg() {
@@ -547,7 +644,8 @@ function pdfExportOptionsFromApp() {
 }
 
 async function buildSvgForExport(rowIndex) {
-  applyRenderContextForRow(rowIndex)
+  applyRowRenderMetadata(rowIndex)
+  await ensureRowTemplateSvg(rowIndex)
   if (fontCatalog) await warmupCatalogFonts(fontCatalog)
   const cacheKey = rowCacheKey(rowIndex)
   const fromCache = catalogFontsLoaded && rowSvgCache.has(cacheKey)
@@ -1333,7 +1431,9 @@ function renderTable() {
 
 async function buildSvgForRow(rowIndex, switchGen) {
   if (switchGen != null && switchGen !== switchGeneration) return null
-  applyRenderContextForRow(rowIndex)
+  applyRowRenderMetadata(rowIndex)
+  const templateReady = await ensureRowTemplateSvg(rowIndex, switchGen)
+  if (!templateReady) return null
   const rawRow = getRows()[rowIndex]
   const displayRow = getSvgRowData(rowIndex)
 
@@ -1695,7 +1795,12 @@ function applyCertificateState(certificate, renderFields) {
     || certificate.preview_ui?.public_snapshot?.preset_bundles
     || {}
   activeRenderPresetId = null
+  loadedTemplateSvgId = null
   templateSvg = certificate.template_svg || EMPTY_SVG_TEMPLATE
+  if (certificate.template_svg && certificate.template_id) {
+    loadedTemplateSvgId = Number(certificate.template_id)
+    publicTemplateSvgCache.set(loadedTemplateSvgId, certificate.template_svg)
+  }
   const pageSize = normalizePageSizeMm(certificate.page_width_mm, certificate.page_height_mm)
   pageWidthMm = pageSize.pageWidthMm
   pageHeightMm = pageSize.pageHeightMm
@@ -1783,7 +1888,7 @@ async function loadCertificate(id) {
   let certificate = publicCertDataCache.get(id)
   if (!certificate) {
     try {
-      const res = await api.getPublicCertificate(id)
+      const res = await api.getPublicCertificate(id, { includeSvg: false })
       certificate = res.certificate
       if (certificate) publicCertDataCache.set(id, certificate)
     } catch (err) {
@@ -1799,14 +1904,6 @@ async function loadCertificate(id) {
 
   const listItem = catalog.find((c) => c.id === id)
   const groupId = certificate.group_id ?? listItem?.group_id ?? null
-  const cfg = await loadSiteConfigForGroup(groupId)
-  setSiteConfig(cfg)
-  applyPublicPageBranding(cfg)
-  const nextPath = buildPublicCertLocationUrl(
-    { id, publicSlug: certificate.public_slug ?? null },
-    cfg,
-  )
-  if (nextPath) window.history.replaceState({}, '', nextPath)
 
   updateCatalogTableSearchText(id, certificate)
 
@@ -1839,19 +1936,30 @@ async function loadCertificate(id) {
   destroyLayoutEditor()
 
   titleEl.textContent = certificate.title
+  renderTable()
+
+  void loadSiteConfigForGroup(groupId).then((cfg) => {
+    if (gen !== loadGeneration) return
+    setSiteConfig(cfg)
+    applyPublicPageBranding(cfg)
+    const nextPath = buildPublicCertLocationUrl(
+      { id, publicSlug: certificate.public_slug ?? null },
+      cfg,
+    )
+    if (nextPath) window.history.replaceState({}, '', nextPath)
+  })
 
   if (!certificate.rows?.length) {
-    renderTable()
     setPreviewLoadingMessage('')
     const empty = document.createElement('p')
     empty.className = 'public-empty'
-    empty.textContent = siteText('noEntityRows', cfg)
+    empty.textContent = siteText('noEntityRows', getSiteConfig())
     previewViewport.setContent(empty)
     return
   }
 
   previewFitPending = true
-  renderTable()
+  preloadCertificateTemplateSvgs(certificate, { prioritizeId: resolveTemplateIdForRow(0) })
 
   scheduleSelectRow(0, { keepColumn: false }, () => {
     if (gen !== loadGeneration) return
@@ -1882,24 +1990,27 @@ function updateCatalogTableSearchText(certId, certificate) {
 async function ensureCatalogTableSearchText() {
   const missing = catalog.filter((c) => !c.table_search_text && !c._table_search_text)
   if (!missing.length) return
-  await Promise.all(missing.map(async (item) => {
+  for (const item of missing) {
     const cached = publicCertDataCache.get(item.id)
     if (cached?.rows?.length) {
       item._table_search_text = buildCertificateTableSearchText(cached.rows.map((r) => r.row_data))
-      return
+      if (certSearch.trim()) renderPublicCertList()
+      continue
     }
     try {
-      const { certificate } = await api.getPublicCertificate(item.id)
+      const { certificate } = await api.getPublicCertificate(item.id, { includeSvg: false })
       if (certificate) {
         publicCertDataCache.set(item.id, certificate)
         if (certificate.rows?.length) {
           item._table_search_text = buildCertificateTableSearchText(certificate.rows.map((r) => r.row_data))
+          if (certSearch.trim()) renderPublicCertList()
         }
       }
     } catch {
       // 单张证书失败不影响其余
     }
-  }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
 }
 
 function formatSearchResultCount(count) {
@@ -2026,7 +2137,7 @@ async function bootstrapPublicViewer() {
       }
     }
     if (id != null && id > 0) {
-      await loadCertificate(id)
+      void loadCertificate(id)
     } else {
       resetPublicViewerToSelectPrompt()
     }

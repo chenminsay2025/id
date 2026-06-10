@@ -9,6 +9,7 @@ import { buildCertificatePresetBundles } from '../certificateRowPresets.js'
 import { sqlPublicGroupInClause } from '../accessControl.js'
 import { resolvePublicSession } from '../auth.js'
 import { attachTableSearchTextToCertificates } from '../certificateSearch.js'
+import { readSvgTemplateFile } from '../svgTemplateFiles.js'
 import { normalizePageSizeMm } from '../../src/pageSize.js'
 
 /**
@@ -16,7 +17,7 @@ import { normalizePageSizeMm } from '../../src/pageSize.js'
  * @param {object} ctx
  */
 export function registerPublicRoutes(app, ctx) {
-  const { db, JWT_SECRET, requireVisitorAuth, resolveTemplateSvg } = ctx
+  const { db, JWT_SECRET, requireVisitorAuth, resolveTemplateSvg, projectRoot } = ctx
 
   app.get('/api/public/certificates', requireVisitorAuth, (c) => {
     const gf = sqlPublicGroupInClause(c.get('visitorPrincipal'), c.get('publicAdminPrincipal'))
@@ -53,18 +54,42 @@ export function registerPublicRoutes(app, ctx) {
     return c.json({ snapshot: buildCertificatePublicSnapshot(db, cert) })
   })
 
+  app.get('/api/public/templates/:id/file', requireVisitorAuth, (c) => {
+    const id = Number(c.req.param('id'))
+    if (!Number.isFinite(id) || id <= 0) return c.json({ error: '无效模板 ID' }, 400)
+    const gf = sqlPublicGroupInClause(c.get('visitorPrincipal'), c.get('publicAdminPrincipal'))
+    const row = db.prepare(`
+      SELECT file_path, svg_content FROM svg_templates WHERE id = ?${gf.clause}
+    `).get(id, ...gf.params)
+    if (!row) return c.json({ error: '未找到' }, 404)
+    const content = row.file_path
+      ? readSvgTemplateFile(projectRoot, row.file_path)
+      : (row.svg_content || null)
+    if (!content || !content.includes('<svg')) {
+      return c.json({ error: '模板文件不存在' }, 404)
+    }
+    return c.body(content, 200, {
+      'Content-Type': 'image/svg+xml; charset=utf-8',
+      'Cache-Control': 'public, max-age=3600',
+    })
+  })
+
   app.get('/api/public/certificates/:id', requireVisitorAuth, (c) => {
     const gf = sqlPublicGroupInClause(c.get('visitorPrincipal'), c.get('publicAdminPrincipal'))
     const cert = resolvePublishedCertificateByRef(db, c.req.param('id'), gf)
     if (!cert) return c.json({ error: '未找到或未发布' }, 404)
+    const includeSvg = c.req.query('include_svg') !== '0'
     const id = cert.id
     const snap = ctx.certificateSnapshot(id)
-    const templateSvg = resolveTemplateSvg(resolveCertificateTemplateId(db, cert))
+    const defaultTemplateId = resolveCertificateTemplateId(db, cert)
+    const templateSvg = includeSvg ? resolveTemplateSvg(defaultTemplateId) : null
     const publicSnap = resolveCertificatePublicSnapshot(db, cert)
     const presetBundles = buildCertificatePresetBundles(db, cert, snap?.rows || [])
-    for (const bundle of Object.values(presetBundles)) {
-      if (bundle?.svg_template_id) {
-        bundle.template_svg = resolveTemplateSvg(bundle.svg_template_id)
+    if (includeSvg) {
+      for (const bundle of Object.values(presetBundles)) {
+        if (bundle?.svg_template_id) {
+          bundle.template_svg = resolveTemplateSvg(bundle.svg_template_id)
+        }
       }
     }
     const defaultPresetId = cert.preset_id != null ? Number(cert.preset_id) : null
@@ -80,7 +105,8 @@ export function registerPublicRoutes(app, ctx) {
         public_slug: cert.public_slug ?? null,
         group_id: cert.group_id != null ? Number(cert.group_id) : null,
         published_at: cert.published_at,
-        template_svg: defaultBundle?.template_svg || templateSvg,
+        template_id: defaultTemplateId,
+        template_svg: includeSvg ? (defaultBundle?.template_svg || templateSvg) : null,
         page_width_mm: pageSize.pageWidthMm,
         page_height_mm: pageSize.pageHeightMm,
         merged_layout_overrides: publicSnap.merged_layout_overrides,

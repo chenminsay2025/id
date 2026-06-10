@@ -388,7 +388,28 @@ export const api = {
   restoreCertificateRevision: (id, revId) => request(`/api/certificates/${id}/revisions/${revId}/restore`, { method: 'POST' }),
 
   listPublicCertificates: () => request('/api/public/certificates'),
-  getPublicCertificate: (id) => request(`/api/public/certificates/${id}`),
+  getPublicCertificate: (id, { includeSvg = true } = {}) => {
+    const q = includeSvg ? '' : '?include_svg=0'
+    return request(`/api/public/certificates/${id}${q}`)
+  },
+  getPublicTemplateFile: async (id) => {
+    const res = await fetch(`${API_BASE}/api/public/templates/${id}/file`, {
+      credentials: 'include',
+      cache: 'default',
+    })
+    const text = await res.text().catch(() => '')
+    if (!res.ok) {
+      let msg = text && text.length < 200 ? text : res.statusText || '加载 SVG 失败'
+      try {
+        const data = JSON.parse(text)
+        if (data.error) msg = data.error
+      } catch { /* ignore */ }
+      const err = new Error(msg)
+      err.status = res.status
+      throw err
+    }
+    return text
+  },
   resolvePublicCertificateBySlug: (slug) => request(`/api/public/certificates/by-slug/${encodeURIComponent(slug)}`),
   getPublicCertificateRenderSnapshot: (id) => request(`/api/public/certificates/${id}/render-snapshot`),
 
