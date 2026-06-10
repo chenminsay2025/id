@@ -449,8 +449,8 @@ export const api = {
 
   exportSvgTemplatesZip: async () => {
     const res = await fetch(`${API_BASE}/api/export/svg-templates`, { credentials: 'include' })
-    const text = await res.text().catch(() => '')
     if (!res.ok) {
+      const text = await res.text().catch(() => '')
       let msg = '导出失败'
       try {
         const data = text ? JSON.parse(text) : {}

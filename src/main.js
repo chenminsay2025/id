@@ -29,6 +29,9 @@ import {
   copyLayoutBoxToClipboard,
   copyLayoutBoxesToClipboard,
   pasteLayoutBoxesFromClipboard,
+  ensureLayoutBoxClipboardReady,
+  initLayoutBoxClipboardSync,
+  tryImportLayoutBoxFromPasteEvent,
   hasLayoutBoxClipboard,
 } from './layoutBoxClipboard.js'
 import {
@@ -754,7 +757,7 @@ function isLayoutBoxVisibleInEditor(id) {
   return isLayoutBoxActive(getColumnLayout(primary, layoutOverrides))
 }
 
-function handleCopyLayoutBoxes(boxIds) {
+async function handleCopyLayoutBoxes(boxIds) {
   layoutEditor?.flushPendingState?.()
   const overrides = layoutEditor?.getPendingOverrides?.() ?? layoutOverrides
   const ids = [...new Set((Array.isArray(boxIds) ? boxIds : [boxIds]).filter(Boolean))]
@@ -765,7 +768,7 @@ function handleCopyLayoutBoxes(boxIds) {
     content: getLayoutBoxPreviewContent(boxId),
   }))
 
-  const ok = copyLayoutBoxesToClipboard(entries, overrides, {
+  const ok = await copyLayoutBoxesToClipboard(entries, overrides, {
     tableColumns: getTableColumns(),
   })
   if (!ok) {
@@ -934,8 +937,9 @@ async function applyPresetLayoutContext(bundle, {
   }
 }
 
-function handlePasteLayoutBox() {
-  if (!hasLayoutBoxClipboard()) {
+async function handlePasteLayoutBox() {
+  const ready = await ensureLayoutBoxClipboardReady()
+  if (!ready || !hasLayoutBoxClipboard()) {
     setStatus('剪贴板中没有已复制的编辑框')
     return
   }
@@ -2262,6 +2266,45 @@ async function loadDefaultExcel() {
 // --- 事件绑定 ---
 
 document.addEventListener('paste', handleClipboardPaste, true)
+
+document.addEventListener('paste', (e) => {
+  const editView = document.getElementById('cms-view-edit')
+  if (editView && !editView.classList.contains('is-active')) return
+  if (e.target?.closest?.('#table-wrap, #tbl-tpl-table-wrap')) return
+  if (document.querySelector('.spreadsheet-cell.is-editing')) return
+  if (!tryImportLayoutBoxFromPasteEvent(e)) return
+  e.preventDefault()
+  e.stopPropagation()
+  void handlePasteLayoutBox()
+}, true)
+
+initLayoutBoxClipboardSync(() => {
+  updateLayoutBoxToolbarButtons()
+})
+
+document.addEventListener('keydown', (e) => {
+  if (!(e.ctrlKey || e.metaKey)) return
+  const editView = document.getElementById('cms-view-edit')
+  if (editView && !editView.classList.contains('is-active')) return
+  const area = document.getElementById('preview-area')
+  if (!area?.isConnected || !area.getClientRects().length) return
+  if (e.target?.closest?.('#table-wrap, #tbl-tpl-table-wrap, .table-templates-panel')) return
+  if (document.querySelector('.spreadsheet-cell.is-editing')) return
+  if (e.target?.closest?.('input, textarea, select, [contenteditable="true"]')) return
+
+  const key = e.key.toLowerCase()
+  if (key === 'c') {
+    const boxIds = layoutEditor?.getSelectedColumns?.() ?? []
+    if (!boxIds.length) return
+    e.preventDefault()
+    e.stopImmediatePropagation()
+    handleCopyLayoutBoxes(boxIds)
+  } else if (key === 'v') {
+    e.preventDefault()
+    e.stopImmediatePropagation()
+    void handlePasteLayoutBox()
+  }
+}, true)
 
 window.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape' || e.repeat) return

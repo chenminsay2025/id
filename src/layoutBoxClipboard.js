@@ -14,10 +14,27 @@ import {
 const PASTE_OFFSET_X = 12
 const PASTE_OFFSET_Y = 12
 const CLIPBOARD_STORAGE_KEY = 'cat5-layout-box-clipboard'
+const CLIPBOARD_CLIP_PREFIX = '##CAT_LAYOUT_BOX:v3##\n'
+const CLIPBOARD_BROADCAST_CHANNEL = 'cat-layout-box-clipboard'
 const CLIPBOARD_VERSION = 3
 
-/** @type {{ version: number, sourceBoxId?: string, layout?: object, content?: string, sampleAdornments?: object | null, items?: object[] } | null} */
+/** @type {{ version: number, copiedAt?: number, sourceBoxId?: string, layout?: object, content?: string, sampleAdornments?: object | null, items?: object[] } | null} */
 let clipboard = null
+/** @type {number} */
+let clipboardCopiedAt = 0
+/** @type {BroadcastChannel | null} */
+let broadcastChannel = null
+
+function clipboardTimestamp(data) {
+  if (!data) return 0
+  const t = Number(data.copiedAt)
+  return Number.isFinite(t) && t > 0 ? t : 0
+}
+
+function decorateClipboardPayload(data) {
+  const copiedAt = clipboardTimestamp(data) || Date.now()
+  return { ...data, copiedAt }
+}
 
 function isValidClipboardItem(item) {
   return item?.layout && layoutHasBox(item.layout)
@@ -34,40 +51,201 @@ function normalizeClipboardItems(data) {
   return []
 }
 
-function syncClipboardFromSession() {
-  try {
-    const raw = sessionStorage.getItem(CLIPBOARD_STORAGE_KEY)
-    if (!raw) {
-      clipboard = null
-      return
-    }
-    const data = JSON.parse(raw)
-    clipboard = normalizeClipboardItems(data).length ? data : null
-  } catch {
+function applyClipboardData(data) {
+  if (!normalizeClipboardItems(data).length) {
     clipboard = null
+    clipboardCopiedAt = 0
+  } else {
+    const payload = decorateClipboardPayload(data)
+    clipboard = payload
+    clipboardCopiedAt = payload.copiedAt
+  }
+  persistClipboardToStorage()
+}
+
+function readClipboardFromStorage(store) {
+  try {
+    const raw = store.getItem(CLIPBOARD_STORAGE_KEY)
+    if (!raw) return null
+    const data = JSON.parse(raw)
+    return normalizeClipboardItems(data).length ? data : null
+  } catch {
+    return null
+  }
+}
+
+function pickNewestStoredClipboard() {
+  const fromSession = readClipboardFromStorage(sessionStorage)
+  const fromLocal = readClipboardFromStorage(localStorage)
+  const sessionAt = clipboardTimestamp(fromSession)
+  const localAt = clipboardTimestamp(fromLocal)
+  if (!fromSession && !fromLocal) return null
+  if (!fromSession) return fromLocal
+  if (!fromLocal) return fromSession
+  return localAt >= sessionAt ? fromLocal : fromSession
+}
+
+/**
+ * @param {{ external?: boolean }} [options] external=true 表示来自其它标签页，仅在存储较新时覆盖内存
+ */
+function syncClipboardFromStorage({ external = false } = {}) {
+  const fromStore = pickNewestStoredClipboard()
+  const storeAt = clipboardTimestamp(fromStore)
+  const memAt = clipboardCopiedAt || clipboardTimestamp(clipboard)
+
+  if (!fromStore) return
+
+  if (external) {
+    if (storeAt >= memAt) {
+      const payload = decorateClipboardPayload(fromStore)
+      clipboard = payload
+      clipboardCopiedAt = payload.copiedAt
+    }
+    return
+  }
+
+  if (storeAt > memAt || !clipboard || !normalizeClipboardItems(clipboard).length) {
+    const payload = decorateClipboardPayload(fromStore)
+    clipboard = payload
+    clipboardCopiedAt = payload.copiedAt
   }
 }
 
 function getClipboardItems() {
-  syncClipboardFromSession()
+  if (clipboard && normalizeClipboardItems(clipboard).length) {
+    return normalizeClipboardItems(clipboard)
+  }
+  syncClipboardFromStorage()
   return normalizeClipboardItems(clipboard)
 }
 
-function saveClipboardToSession() {
+function persistClipboardToStorage() {
+  const raw = clipboard ? JSON.stringify(clipboard) : null
   try {
-    if (clipboard) {
-      sessionStorage.setItem(CLIPBOARD_STORAGE_KEY, JSON.stringify(clipboard))
+    if (raw) {
+      sessionStorage.setItem(CLIPBOARD_STORAGE_KEY, raw)
+      localStorage.setItem(CLIPBOARD_STORAGE_KEY, raw)
     } else {
       sessionStorage.removeItem(CLIPBOARD_STORAGE_KEY)
+      localStorage.removeItem(CLIPBOARD_STORAGE_KEY)
     }
   } catch {
-    /* sessionStorage unavailable */
+    /* storage unavailable */
+  }
+  try {
+    broadcastChannel?.postMessage({ type: 'update' })
+  } catch {
+    /* ignore */
   }
 }
 
-syncClipboardFromSession()
+function serializeForSystemClipboard(data) {
+  return `${CLIPBOARD_CLIP_PREFIX}${JSON.stringify(data)}`
+}
+
+/**
+ * @param {string} text
+ */
+export function parseLayoutBoxClipboardText(text) {
+  const raw = String(text || '')
+  if (!raw.startsWith(CLIPBOARD_CLIP_PREFIX)) return null
+  try {
+    const data = JSON.parse(raw.slice(CLIPBOARD_CLIP_PREFIX.length))
+    return normalizeClipboardItems(data).length ? data : null
+  } catch {
+    return null
+  }
+}
+
+async function writeToSystemClipboard(data) {
+  if (!navigator.clipboard?.writeText) return false
+  try {
+    await navigator.clipboard.writeText(serializeForSystemClipboard(data))
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 从系统剪贴板读取布局编辑框数据（需在用户手势内调用，如粘贴快捷键）。
+ */
+export async function refreshLayoutBoxClipboardFromSystem() {
+  if (!navigator.clipboard?.readText) return false
+  try {
+    const text = await navigator.clipboard.readText()
+    const data = parseLayoutBoxClipboardText(text)
+    if (!data) return false
+    const sysAt = clipboardTimestamp(data)
+    const memAt = clipboardCopiedAt || clipboardTimestamp(clipboard)
+    if (sysAt < memAt && normalizeClipboardItems(clipboard).length) return false
+    applyClipboardData(data)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** 粘贴前：内存 → localStorage → 系统剪贴板 */
+export async function ensureLayoutBoxClipboardReady() {
+  if (clipboard && normalizeClipboardItems(clipboard).length) return true
+  syncClipboardFromStorage()
+  if (normalizeClipboardItems(clipboard).length) return true
+  const ok = await refreshLayoutBoxClipboardFromSystem()
+  return ok && normalizeClipboardItems(clipboard).length > 0
+}
+
+/**
+ * @param {ClipboardEvent} e
+ */
+export function tryImportLayoutBoxFromPasteEvent(e) {
+  const text = e.clipboardData?.getData('text/plain')
+  const data = parseLayoutBoxClipboardText(text)
+  if (!data) return false
+  applyClipboardData(data)
+  return true
+}
+
+/**
+ * 跨标签页同步剪贴板（localStorage + BroadcastChannel）。
+ * @param {() => void} [onExternalUpdate]
+ */
+export function initLayoutBoxClipboardSync(onExternalUpdate) {
+  if (typeof window === 'undefined') return () => {}
+  const onStorage = (e) => {
+    if (e.key !== CLIPBOARD_STORAGE_KEY) return
+    syncClipboardFromStorage({ external: true })
+    onExternalUpdate?.()
+  }
+  window.addEventListener('storage', onStorage)
+  try {
+    if (typeof BroadcastChannel !== 'undefined') {
+      broadcastChannel = new BroadcastChannel(CLIPBOARD_BROADCAST_CHANNEL)
+      broadcastChannel.onmessage = () => {
+        syncClipboardFromStorage({ external: true })
+        onExternalUpdate?.()
+      }
+    }
+  } catch {
+    broadcastChannel = null
+  }
+  return () => {
+    window.removeEventListener('storage', onStorage)
+    try {
+      broadcastChannel?.close()
+    } catch {
+      /* ignore */
+    }
+    broadcastChannel = null
+  }
+}
+
+syncClipboardFromStorage()
 
 export function getLayoutBoxClipboard() {
+  if (!clipboard || !normalizeClipboardItems(clipboard).length) {
+    syncClipboardFromStorage()
+  }
   return clipboard
 }
 
@@ -77,7 +255,8 @@ export function hasLayoutBoxClipboard() {
 
 export function clearLayoutBoxClipboard() {
   clipboard = null
-  saveClipboardToSession()
+  clipboardCopiedAt = 0
+  persistClipboardToStorage()
 }
 
 /**
@@ -357,7 +536,7 @@ function applyPastedLayoutToOverrides(layoutOverrides, layout, boxId, tableColum
  * @param {object} layoutOverrides
  * @param {{ sourcePresetId?: number | null, tableColumns?: string[] }} [meta]
  */
-export function copyLayoutBoxesToClipboard(entries, layoutOverrides, meta = {}) {
+export async function copyLayoutBoxesToClipboard(entries, layoutOverrides, meta = {}) {
   const tableColumns = meta.tableColumns || []
   const items = []
   for (const entry of entries) {
@@ -372,13 +551,14 @@ export function copyLayoutBoxesToClipboard(entries, layoutOverrides, meta = {}) 
     })
   }
   if (!items.length) return false
-  clipboard = structuredClone({
+  const payload = structuredClone({
     version: CLIPBOARD_VERSION,
+    copiedAt: Date.now(),
     ...meta,
     items,
   })
-  saveClipboardToSession()
-  syncClipboardFromSession()
+  applyClipboardData(payload)
+  await writeToSystemClipboard(payload)
   return normalizeClipboardItems(clipboard).length > 0
 }
 
@@ -388,7 +568,7 @@ export function copyLayoutBoxesToClipboard(entries, layoutOverrides, meta = {}) 
  * @param {string} [content]
  * @param {{ sampleAdornments?: { prefix?: unknown[], suffix?: unknown[] } | null }} [extras]
  */
-export function copyLayoutBoxToClipboard(boxId, layoutOverrides, content = '', extras = {}) {
+export async function copyLayoutBoxToClipboard(boxId, layoutOverrides, content = '', extras = {}) {
   return copyLayoutBoxesToClipboard([{
     boxId,
     content,

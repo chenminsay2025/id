@@ -1747,7 +1747,7 @@ export function mountLayoutEditor(stage, svgEl, options) {
       e.preventDefault()
       e.stopPropagation()
       e.stopImmediatePropagation()
-      options.onPasteBox()
+      void Promise.resolve(options.onPasteBox()).catch(() => {})
       return
     }
     if (mod && key === 'a') {

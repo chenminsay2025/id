@@ -73,6 +73,9 @@ import {
   copyLayoutBoxesToClipboard,
   pasteLayoutBoxesFromClipboard,
   hasLayoutBoxClipboard,
+  ensureLayoutBoxClipboardReady,
+  initLayoutBoxClipboardSync,
+  tryImportLayoutBoxFromPasteEvent,
   getLayoutBoxClipboard,
 } from '../layoutBoxClipboard.js'
 import { loadFontCatalog, ensureCatalogFontFaces } from '../fontCatalog.js'
@@ -394,6 +397,7 @@ export function mountLayoutPresetsPanel(container, options = {}) {
   let presetWriteChain = Promise.resolve()
   let autosaveTimer = null
   let statusClearTimer = null
+  const AUTOSAVE_ENABLED = false
   const AUTOSAVE_MS = 5 * 60_000
   let layoutOverrides = {}
   let fontScale = 1
@@ -877,6 +881,8 @@ export function mountLayoutPresetsPanel(container, options = {}) {
 
   function startAutosaveTimer() {
     clearInterval(autosaveTimer)
+    autosaveTimer = null
+    if (!AUTOSAVE_ENABLED) return
     autosaveTimer = setInterval(() => {
       if (draftDirty && currentId && !presetLoading) {
         void saveCurrentPreset({ revisionNote: '自动保存', quiet: true })
@@ -916,6 +922,40 @@ export function mountLayoutPresetsPanel(container, options = {}) {
       e.stopImmediatePropagation()
       performLayoutRedo()
     }
+  }
+
+  function onDocumentKeydownCopyPaste(e) {
+    if (!(e.ctrlKey || e.metaKey)) return
+    if (!isLayoutPresetsViewActive() || !currentId || !presetLoadReady) return
+    if (!isLayoutPresetsShortcutActive()) return
+    if (e.target.closest('#table-wrap') || e.target.closest('#tbl-tpl-table-wrap')) return
+    if (e.target.closest('.spreadsheet-cell.is-editing')) return
+    if (e.target.closest('input, textarea, select, [contenteditable="true"]')) return
+
+    const key = e.key.toLowerCase()
+    if (key === 'c') {
+      const boxIds = getSelectedLayoutBoxIds()
+      if (!boxIds.length) return
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      handleCopyLayoutBoxes(boxIds)
+      return
+    }
+    if (key === 'v') {
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      void handlePasteLayoutBox()
+    }
+  }
+
+  function onDocumentPasteLayoutBox(e) {
+    if (!isLayoutPresetsViewActive() || !currentId || !presetLoadReady) return
+    if (e.target.closest('#table-wrap') || e.target.closest('#tbl-tpl-table-wrap')) return
+    if (e.target.closest('.spreadsheet-cell.is-editing')) return
+    if (!tryImportLayoutBoxFromPasteEvent(e)) return
+    e.preventDefault()
+    e.stopPropagation()
+    void handlePasteLayoutBox()
   }
 
   function syncSidebarActions() {
@@ -2933,7 +2973,7 @@ export function mountLayoutPresetsPanel(container, options = {}) {
     }
   }
 
-  function handleCopyLayoutBoxes(boxIds) {
+  async function handleCopyLayoutBoxes(boxIds) {
     if (!ensureLayoutEditorAttached()) {
       setStatus('预览尚未就绪，请稍候再试', true)
       return
@@ -2955,7 +2995,7 @@ export function mountLayoutPresetsPanel(container, options = {}) {
       }
     })
 
-    const ok = copyLayoutBoxesToClipboard(entries, overrides, {
+    const ok = await copyLayoutBoxesToClipboard(entries, overrides, {
       sourcePresetId: currentId,
       tableColumns: previewColumns,
     })
@@ -3002,7 +3042,8 @@ export function mountLayoutPresetsPanel(container, options = {}) {
   }
 
   async function handlePasteLayoutBox() {
-    if (!hasLayoutBoxClipboard()) {
+    const ready = await ensureLayoutBoxClipboardReady()
+    if (!ready || !hasLayoutBoxClipboard()) {
       setStatus('剪贴板中没有已复制的编辑框', true)
       return
     }
@@ -4356,6 +4397,9 @@ export function mountLayoutPresetsPanel(container, options = {}) {
       try {
         window.addEventListener('keydown', onDocumentKeydownSave)
         window.addEventListener('keydown', onDocumentKeydownUndoRedo, true)
+        window.addEventListener('keydown', onDocumentKeydownCopyPaste, true)
+        document.addEventListener('paste', onDocumentPasteLayoutBox, true)
+        initLayoutBoxClipboardSync(() => refreshTopEditToolbar())
         startAutosaveTimer()
         await ensureApiReady()
         bindPresetGroupSelectOnce()
