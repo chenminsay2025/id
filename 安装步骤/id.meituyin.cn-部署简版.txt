@@ -1,0 +1,50 @@
+id.meituyin.cn 部署简版
+仓库：git@github.com:chenminsay2025/id.git  分支 main
+与 cat 站并存：本站端口 3004，PM2 名 id-svg（cat 一般用 3003）
+
+① DNS + 建站
+   id.meituyin.cn → A 记录指向服务器
+   宝塔：传统项目建站，目录 /www/wwwroot/id.meituyin.cn，开 SSL
+
+② 终端首次拉代码（Git 部署「确定」易超时，用终端）
+   cd /www/wwwroot/id.meituyin.cn
+   git clone --depth 1 -b main git@github.com:chenminsay2025/id.git .
+   chown -R www:www .
+   sudo -u www npm config set registry https://registry.npmmirror.com
+   sudo -u www npm install && sudo -u www npm run build
+
+③ .env
+   cp .env.example .env
+   PORT=3004
+   CORS_ORIGIN=https://id.meituyin.cn
+   NODE_ENV=production
+   JWT_SECRET=随机长串
+   ADMIN_PASSWORD=强密码
+   chown www:www .env && chmod 600 .env
+
+④ PM2
+   名称 id-svg | 启动 server/index.js | 目录网站根 | 用户 www | 端口 3004
+   勿与 id-server 重复
+
+⑤ 反代
+   http://127.0.0.1:3004  发送域名 $host
+
+⑥ 安装
+   https://id.meituyin.cn/install.html → 填域名与 3004 → 安装 → PM2 重启
+
+⑦ 验证
+   curl http://127.0.0.1:3004/install.html  → 200
+   curl http://127.0.0.1:3004/api/meta      → 安装后 200
+   浏览器：/login.html
+
+⑧ 日后更新
+   cd /www/wwwroot/id.meituyin.cn
+   PM2_NAME=id-svg bash scripts/deploy-from-git.sh
+
+⑨ 踩坑速记
+   npm EACCES        → chown -R www:www .（git clone 用 root 时）
+   502               → PM2 未监听 3004，pm2 logs id-svg
+   关反代能看安装页   → 须开反代 + Node 才能完整安装
+   group_id 启动崩   → git pull 后 rm data/cat.db* 再 install
+
+详细版：安装步骤/id.meituyin.cn-从GitHub到宝塔完整部署.md
