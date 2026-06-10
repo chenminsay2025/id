@@ -10,6 +10,8 @@
 | [新电脑完整配置指南.md](./新电脑完整配置指南.md) | 从备份 zip 或另一台电脑迁移项目、拷贝数据库与配置 |
 | [宝塔三步安装.txt](./宝塔三步安装.txt) | 宝塔面板上线：上传 → 安装 → 反代（简明版） |
 | [发布到服务器.md](./发布到服务器.md) | 宝塔/Nginx/PM2 完整部署、更新、备份与排错 |
+| [id.meituyin.cn-从GitHub到宝塔完整部署.md](./id.meituyin.cn-从GitHub到宝塔完整部署.md) | **实录**：GitHub 推送 → 宝塔建站 → 终端克隆 → PM2 → 安装成功（含踩坑） |
+| [id.meituyin.cn-Git部署.md](./id.meituyin.cn-Git部署.md) | id 站 Git + 宝塔简版步骤 |
 
 ## 安装后生成的文件
 
