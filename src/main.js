@@ -101,7 +101,7 @@ import {
   saveDefaultLayoutSettingsToProject,
   downloadDefaultLayoutSettings,
 } from './defaultLayoutSettings.js'
-import { EMPTY_SVG_TEMPLATE, loadSvgTemplateContent } from './svgTemplateLoader.js'
+import { EMPTY_SVG_TEMPLATE, loadSvgTemplateContentResult } from './svgTemplateLoader.js'
 import { requireAdminSession } from './admin/guard.js'
 import { mountCmsBar } from './admin/cms.js'
 import { loadSiteConfig, applyDocumentTitle } from './siteConfig.js'
@@ -1406,7 +1406,12 @@ async function loadTemplateById(id) {
   }
   const { template } = await api.getTemplate(id)
   templateId = template.id
-  templateSvg = await loadSvgTemplateContent(api, templateId, { fallback: EMPTY_SVG_TEMPLATE })
+  const svgResult = await loadSvgTemplateContentResult(api, templateId, { fallback: EMPTY_SVG_TEMPLATE })
+  templateSvg = svgResult.content
+  if (svgResult.missing) {
+    const tplName = template?.name ? `「${template.name}」` : `#${templateId}`
+    setStatus(`SVG 模板 ${tplName} 的文件已丢失，请在「本证书模板」中重新选择或到「SVG 模板库」重新上传`)
+  }
   clearRowSvgCache()
   previewFontReady = false
 }

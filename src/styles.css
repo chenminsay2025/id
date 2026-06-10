@@ -10047,6 +10047,26 @@ body.tbl-tpl-col-dragging .tbl-tpl-col-grip {
   min-width: 9em;
 }
 
+.layout-presets-view-toolbar .tb-field--inline:has(.layout-preset-svg-missing-hint:not([hidden])) {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.layout-presets-view-toolbar .tb-field--inline .tb-select.is-error {
+  border-color: #dc2626;
+  box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.25);
+}
+
+.layout-preset-svg-missing-hint {
+  flex: 1 1 100%;
+  margin-top: 4px;
+  max-width: 24em;
+  font-size: 11px;
+  line-height: 1.35;
+  color: #dc2626;
+  font-weight: 500;
+}
+
 .layout-presets-view-toolbar .layout-preset-group-slot .resource-group-field {
   margin: 0;
 }

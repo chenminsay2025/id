@@ -12,23 +12,61 @@ export function invalidateSvgTemplateCache(id) {
   else contentCache.clear()
 }
 
+function isMissingTemplateError(err) {
+  if (!err) return false
+  if (err.status === 404) return true
+  return /不存在|无效|not found/i.test(String(err.message || ''))
+}
+
 /**
  * 从服务器文件读取 SVG 模板内容（需登录）。
  * @param {import('./api/client.js').api} apiClient
  * @param {number | null | undefined} id
  * @param {{ fallback?: string }} [options]
+ * @returns {Promise<{ content: string, missing: boolean, templateId: number | null, message: string }>}
  */
-export async function loadSvgTemplateContent(apiClient, id, { fallback = EMPTY_SVG_TEMPLATE } = {}) {
-  if (!id) return fallback
-  const numId = Number(id)
-  if (contentCache.has(numId)) return contentCache.get(numId)
-
-  const text = await apiClient.getTemplateFile(numId)
-  if (!text || !text.includes('<svg')) {
-    throw new Error('SVG 模板文件无效或不存在')
+export async function loadSvgTemplateContentResult(apiClient, id, { fallback = EMPTY_SVG_TEMPLATE } = {}) {
+  if (!id) {
+    return { content: fallback, missing: false, templateId: null, message: '' }
   }
-  contentCache.set(numId, text)
-  return text
+  const numId = Number(id)
+  if (contentCache.has(numId)) {
+    return { content: contentCache.get(numId), missing: false, templateId: numId, message: '' }
+  }
+
+  try {
+    const text = await apiClient.getTemplateFile(numId)
+    if (!text || !text.includes('<svg')) {
+      return {
+        content: fallback,
+        missing: true,
+        templateId: numId,
+        message: 'SVG 模板文件无效或不存在',
+      }
+    }
+    contentCache.set(numId, text)
+    return { content: text, missing: false, templateId: numId, message: '' }
+  } catch (err) {
+    if (isMissingTemplateError(err)) {
+      return {
+        content: fallback,
+        missing: true,
+        templateId: numId,
+        message: err.message || '模板文件不存在',
+      }
+    }
+    throw err
+  }
+}
+
+/**
+ * @param {import('./api/client.js').api} apiClient
+ * @param {number | null | undefined} id
+ * @param {{ fallback?: string }} [options]
+ */
+export async function loadSvgTemplateContent(apiClient, id, options = {}) {
+  const result = await loadSvgTemplateContentResult(apiClient, id, options)
+  return result.content
 }
 
 /**

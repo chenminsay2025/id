@@ -94,7 +94,7 @@ import {
   parseSampleStorage,
   sampleSegmentsToDisplayText,
 } from '../sampleDialogSegments.js'
-import { EMPTY_SVG_TEMPLATE, loadSvgTemplateContent } from '../svgTemplateLoader.js'
+import { EMPTY_SVG_TEMPLATE, loadSvgTemplateContentResult } from '../svgTemplateLoader.js'
 import {
   DEFAULT_PAGE_WIDTH_MM,
   DEFAULT_PAGE_HEIGHT_MM,
@@ -205,6 +205,7 @@ export function mountLayoutPresetsPanel(container, options = {}) {
               <label class="tb-field tb-field--inline" title="关联的 SVG 文件">
                 <span class="tb-field__label">SVG</span>
                 <select id="layout-preset-svg-select" class="tb-select"></select>
+                <span id="layout-preset-svg-missing-hint" class="layout-preset-svg-missing-hint" hidden role="alert"></span>
               </label>
               <label class="tb-field tb-field--inline" title="关联的表格列结构">
                 <span class="tb-field__label">表格</span>
@@ -347,6 +348,7 @@ export function mountLayoutPresetsPanel(container, options = {}) {
   const copyBtn = container.querySelector('#layout-preset-copy')
   const newBtn = container.querySelector('#layout-preset-new')
   const svgSelectEl = container.querySelector('#layout-preset-svg-select')
+  const svgMissingHintEl = container.querySelector('#layout-preset-svg-missing-hint')
   const tableSelectEl = container.querySelector('#layout-preset-table-select')
   const pageWidthEl = container.querySelector('#layout-preset-page-width-mm')
   const pageHeightEl = container.querySelector('#layout-preset-page-height-mm')
@@ -786,6 +788,48 @@ export function mountLayoutPresetsPanel(container, options = {}) {
         if (statusEl.textContent === msg) statusEl.textContent = ''
       }, 4000)
     }
+  }
+
+  function formatMissingSvgTemplateMessage(templateId) {
+    const tpl = svgTemplates.find((t) => t.id === templateId)
+    const label = tpl?.name ? `「${tpl.name}」` : `#${templateId}`
+    return `SVG 模板 ${label} 的文件已丢失，请在上方 SVG 下拉框重新选择，或到「SVG 模板库」重新上传`
+  }
+
+  function syncMissingSvgTemplateUi(templateId, message = '') {
+    const text = message || formatMissingSvgTemplateMessage(templateId)
+    if (svgSelectEl) {
+      svgSelectEl.classList.add('is-error')
+      svgSelectEl.setAttribute('aria-invalid', 'true')
+      svgSelectEl.title = text
+    }
+    if (svgMissingHintEl) {
+      svgMissingHintEl.hidden = false
+      svgMissingHintEl.textContent = text
+    }
+    setStatus(text, true)
+  }
+
+  function clearMissingSvgTemplateUi() {
+    if (svgSelectEl) {
+      svgSelectEl.classList.remove('is-error')
+      svgSelectEl.removeAttribute('aria-invalid')
+      svgSelectEl.title = '关联的 SVG 文件'
+    }
+    if (svgMissingHintEl) {
+      svgMissingHintEl.hidden = true
+      svgMissingHintEl.textContent = ''
+    }
+  }
+
+  function applySvgTemplateLoadResult(result) {
+    templateSvg = result.content
+    if (result.missing && result.templateId != null) {
+      syncMissingSvgTemplateUi(result.templateId, result.message)
+      return true
+    }
+    clearMissingSvgTemplateUi()
+    return false
   }
 
   function formatPresetTime(iso) {
@@ -1377,8 +1421,11 @@ export function mountLayoutPresetsPanel(container, options = {}) {
     const tableId = preset.table_template_id ?? tableTemplates[0]?.id ?? null
 
     let templateSvgLocal = EMPTY_SVG_TEMPLATE
+    let missingSvgTemplateId = null
     if (svgId) {
-      templateSvgLocal = await loadSvgTemplateContent(api, svgId, { fallback: EMPTY_SVG_TEMPLATE })
+      const svgResult = await loadSvgTemplateContentResult(api, svgId, { fallback: EMPTY_SVG_TEMPLATE })
+      templateSvgLocal = svgResult.content
+      if (svgResult.missing) missingSvgTemplateId = svgResult.templateId
     }
 
     let previewColumnsLocal = []
@@ -1430,6 +1477,7 @@ export function mountLayoutPresetsPanel(container, options = {}) {
       overlayShowHandles: true,
       draftDirty: false,
       svgTemplateId: svgId,
+      missingSvgTemplateId,
       tableTemplateId: tableId,
       editorTitle: preset.name || '编辑布局',
       templateSvg: templateSvgLocal,
@@ -1491,6 +1539,13 @@ export function mountLayoutPresetsPanel(container, options = {}) {
             }
           }
           return session
+        } catch (err) {
+          console.error('加载布局会话失败', presetId, err)
+          if (openTabIds.includes(presetId) && presetId === currentId) {
+            setPreviewLoading(false)
+            setStatus(err.message || '加载布局会话失败', true)
+          }
+          return null
         } finally {
           presetSessionLoadTasks.delete(presetId)
           loadingTabIds.delete(presetId)
@@ -1630,6 +1685,11 @@ export function mountLayoutPresetsPanel(container, options = {}) {
 
     if (session.templateSvg) {
       templateSvg = session.templateSvg
+    }
+    if (session.missingSvgTemplateId != null) {
+      syncMissingSvgTemplateUi(session.missingSvgTemplateId)
+    } else {
+      clearMissingSvgTemplateUi()
     }
     if (session.previewColumns) {
       previewColumns = [...session.previewColumns]
@@ -3465,9 +3525,11 @@ export function mountLayoutPresetsPanel(container, options = {}) {
   async function loadSvgTemplate(id) {
     if (!id) {
       templateSvg = EMPTY_SVG_TEMPLATE
-      return
+      clearMissingSvgTemplateUi()
+      return false
     }
-    templateSvg = await loadSvgTemplateContent(api, id, { fallback: EMPTY_SVG_TEMPLATE })
+    const result = await loadSvgTemplateContentResult(api, id, { fallback: EMPTY_SVG_TEMPLATE })
+    return applySvgTemplateLoadResult(result)
   }
 
   /**
@@ -3832,10 +3894,17 @@ export function mountLayoutPresetsPanel(container, options = {}) {
     const presetId = currentId
     const svgId = getSelectedSvgTemplateId()
     const tableId = getSelectedTableTemplateId()
-    await Promise.all([
-      loadSvgTemplate(svgId),
-      loadTableTemplateColumns(tableId),
-    ])
+    try {
+      await Promise.all([
+        loadSvgTemplate(svgId),
+        loadTableTemplateColumns(tableId),
+      ])
+    } catch (err) {
+      if (loadGen === loadContextGeneration && presetId === currentId) {
+        setStatus(err.message || '加载模板失败', true)
+      }
+      return
+    }
     if (loadGen !== loadContextGeneration || presetId !== currentId) return
     activeTableTemplateId = tableId
     finalizeLayoutForCurrentTable()
@@ -4182,9 +4251,21 @@ export function mountLayoutPresetsPanel(container, options = {}) {
     draftDirty = true
     presetTabPreviewDomCache.delete(currentId)
     void (async () => {
-      await refreshPreviewContext()
-      await persistPresetTemplateRefs({ quiet: true })
-      setStatus('有未保存的修改（SVG 模板选择已自动保存）')
+      try {
+        await refreshPreviewContext()
+        await persistPresetTemplateRefs({ quiet: true })
+        const svgId = getSelectedSvgTemplateId()
+        const tpl = svgTemplates.find((t) => t.id === svgId)
+        if (svgSelectEl?.classList.contains('is-error')) {
+          setStatus('SVG 模板文件仍不可用，请重新选择或到「SVG 模板库」上传', true)
+        } else {
+          setStatus(tpl?.name
+            ? `已切换 SVG 模板「${tpl.name}」（关联已自动保存）`
+            : '有未保存的修改（SVG 模板选择已自动保存）')
+        }
+      } catch (err) {
+        setStatus(err.message || '切换 SVG 模板失败', true)
+      }
     })()
   })
 

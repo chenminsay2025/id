@@ -1,6 +1,6 @@
 import { api } from '../api/client.js'
 import { mountIsolatedSvgPreview, unmountIsolatedSvgPreview } from '../svgPreview.js'
-import { invalidateSvgTemplateCache, loadSvgTemplateContent } from '../svgTemplateLoader.js'
+import { invalidateSvgTemplateCache, loadSvgTemplateContentResult } from '../svgTemplateLoader.js'
 import { loadAccessibleGroups, shouldShowGroupUi, defaultGroupIdForUser, groupNameById } from './groupUtils.js'
 import { groupSelectFieldHtml, readGroupSelectValue } from './groupSelectorUi.js'
 
@@ -83,9 +83,12 @@ export function mountTemplatesPanel(container, options = {}) {
 
   async function getTemplateSvg(id) {
     if (svgCache.has(id)) return svgCache.get(id)
-    const svg = await loadSvgTemplateContent(api, id)
-    svgCache.set(id, svg)
-    return svg
+    const result = await loadSvgTemplateContentResult(api, id)
+    if (result.missing) {
+      throw new Error(result.message || '模板文件不存在')
+    }
+    svgCache.set(id, result.content)
+    return result.content
   }
 
   function setUploadFormStatus(msg, isError = false) {
