@@ -201,24 +201,17 @@ function runMigrations(db) {
     ensureColumn(db, 'layout_presets', 'page_nav_column', 'TEXT NOT NULL DEFAULT \'\'')
   })
 
-  // v6: 证书行级布局模板 + 回收站
+  // v6: 证书行级布局模板 + 回收站（idx_cert_public_slug_group 在 migrateAccessGroups 建 group_id 后创建）
   applyMigration(db, 6, (db) => {
     ensureColumn(db, 'certificate_rows', 'preset_id', 'INTEGER REFERENCES layout_presets(id) ON DELETE SET NULL')
     ensureColumn(db, 'certificates', 'deleted_at', 'TEXT')
     ensureColumn(db, 'certificates', 'trashed_from_status', 'TEXT')
     ensureColumn(db, 'certificates', 'public_slug', 'TEXT')
-    db.exec(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_cert_public_slug_group
-      ON certificates(group_id, public_slug)
-      WHERE public_slug IS NOT NULL AND deleted_at IS NULL
-    `)
   })
 
-  // v7: 站点品牌按组分
+  // v7: 站点品牌按组分（新库在 migrateAccessGroups 建表后补列）
   applyMigration(db, 7, (db) => {
-    ensureColumn(db, 'site_branding_by_group', 'public_base_url', 'TEXT')
-    ensureColumn(db, 'site_branding_by_group', 'public_cert_param', "TEXT NOT NULL DEFAULT 'cert'")
-    ensureColumn(db, 'site_branding_by_group', 'public_cert_url_style', "TEXT NOT NULL DEFAULT 'query'")
+    ensureSiteBrandingByGroupColumns(db)
   })
 
   // v8: 访客行为追踪
@@ -296,6 +289,32 @@ function ensureColumn(db, table, column, definition) {
   if (!cols.some((c) => c.name === column)) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
   }
+}
+
+function tableExists(db, table) {
+  return !!db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+  ).get(table)
+}
+
+/** v7 列：仅当 site_branding_by_group 表已存在时执行 */
+export function ensureSiteBrandingByGroupColumns(db) {
+  if (!tableExists(db, 'site_branding_by_group')) return
+  ensureColumn(db, 'site_branding_by_group', 'public_base_url', 'TEXT')
+  ensureColumn(db, 'site_branding_by_group', 'public_cert_param', "TEXT NOT NULL DEFAULT 'cert'")
+  ensureColumn(db, 'site_branding_by_group', 'public_cert_url_style', "TEXT NOT NULL DEFAULT 'query'")
+}
+
+/** 访问组迁移后：certificates.group_id 与公开 slug 唯一索引 */
+export function ensureCertificatePublicSlugGroupIndex(db) {
+  if (!tableExists(db, 'certificates')) return
+  const cols = db.prepare('PRAGMA table_info(certificates)').all()
+  if (!cols.some((c) => c.name === 'group_id')) return
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_cert_public_slug_group
+    ON certificates(group_id, public_slug)
+    WHERE public_slug IS NOT NULL AND deleted_at IS NULL
+  `)
 }
 
 export function getDefaultTemplateId(db) {

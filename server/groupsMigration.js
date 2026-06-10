@@ -1,4 +1,7 @@
-import { slugify } from './db.js'
+import {
+  ensureCertificatePublicSlugGroupIndex,
+  ensureSiteBrandingByGroupColumns,
+} from './db.js'
 import { ROLES, backfillNullResourceGroupIds, ensureUngroupedGroup } from './accessControl.js'
 import { migrateGroupMergeLog } from './groupMerge.js'
 import { backfillPublishedCertificateAccessGroups } from './certificateAccessGroup.js'
@@ -95,9 +98,11 @@ export function migrateAccessGroups(db) {
     CREATE INDEX IF NOT EXISTS idx_preset_group ON layout_presets(group_id);
     CREATE INDEX IF NOT EXISTS idx_cert_group ON certificates(group_id);
   `)
+  ensureCertificatePublicSlugGroupIndex(db)
 
   backfillPublishedCertificateAccessGroups(db)
   migrateSiteBrandingByGroup(db)
+  ensureSiteBrandingByGroupColumns(db)
   ensureUngroupedGroup(db)
   migrateGroupMergeLog(db)
   backfillNullResourceGroupIds(db)
