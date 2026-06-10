@@ -8747,7 +8747,7 @@ body.tbl-tpl-col-dragging .tbl-tpl-col-grip {
 
 .fonts-url-entry {
   display: grid;
-  grid-template-columns: 16px 42px minmax(0, 1fr) 12px auto;
+  grid-template-columns: 16px auto minmax(0, 1fr) 12px auto;
   gap: 8px 10px;
   align-items: center;
   padding: 6px 8px;
@@ -8765,6 +8765,14 @@ body.tbl-tpl-col-dragging .tbl-tpl-col-grip {
   accent-color: var(--primary);
 }
 
+.fonts-tag-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+}
+
 .fonts-tag {
   font-size: 11px;
   font-weight: 700;
@@ -8772,6 +8780,7 @@ body.tbl-tpl-col-dragging .tbl-tpl-col-grip {
   padding: 3px 6px;
   border-radius: 4px;
   line-height: 1.35;
+  flex-shrink: 0;
 }
 
 .fonts-tag--cdn { color: #1d4ed8; background: #dbeafe; }
@@ -8887,7 +8896,7 @@ body.tbl-tpl-col-dragging .tbl-tpl-col-grip {
   }
 
   .fonts-url-entry .font-url-enabled { grid-area: radio; }
-  .fonts-url-entry .fonts-tag { grid-area: tag; }
+  .fonts-url-entry .fonts-tag-cell { grid-area: tag; }
   .fonts-url-entry .fonts-dot { grid-area: dot; justify-self: end; }
   .fonts-url-entry .font-url { grid-area: url; }
   .fonts-entry-act {

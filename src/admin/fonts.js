@@ -463,7 +463,9 @@ export function mountFontsPanel(container) {
       return `
       <div class="fonts-url-entry${entry.enabled ? ' is-active' : ''}${matchesEnv ? ' is-env-match' : ''}">
         <input type="radio" class="font-url-enabled" name="${escapeHtml(groupName)}" ${entry.enabled ? 'checked' : ''} title="当前地址" />
-        <span class="fonts-tag ${kind.className}">${kind.label}</span>${envBadge}
+        <span class="fonts-tag-cell">
+          <span class="fonts-tag ${kind.className}">${kind.label}</span>${envBadge}
+        </span>
         <input type="text" class="font-url" value="${escapeHtml(entry.url)}" list="font-url-suggestions" placeholder="https://… 或 /font/…" spellcheck="false" />
         ${renderTestBadge(sourceId, entry.url)}
         <div class="fonts-entry-act">
