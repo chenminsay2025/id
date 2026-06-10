@@ -68,6 +68,7 @@ import { searchTextIncludes } from '../searchNormalize.js'
  *   onTableRefreshNeeded?: () => void,
  *   refreshPreviewForRow?: (rowIndex: number, options?: object) => Promise<void>,
  *   getPreviewDisplayedRow?: () => number,
+ *   syncPreviewToRow?: (rowIndex: number) => void | Promise<void>,
  *   onStatus?: (msg: string) => void,
  * }} options
  */
@@ -78,6 +79,8 @@ export function mountCmsBar(root, options) {
   let currentPresetId = null
   /** @type {number | null} 编辑器当前已加载的布局模板（可能为某行的专用布局） */
   let loadedPresetId = null
+  /** 布局模板库保存后，证书编辑页需强制重载布局 */
+  let presetsEditorReloadPending = false
   /** @type {number | null} */
   let currentPresetSvgId = null
   /** @type {number | null} */
@@ -929,10 +932,15 @@ export function mountCmsBar(root, options) {
         user: options.user,
         accessGroups,
         onChange: async () => {
+          presetsEditorReloadPending = true
           await refreshPresets()
           invalidateGroupCache()
           accessGroups = await loadAccessibleGroups(true)
           if (currentView === 'list') renderCertTable()
+          if (currentView === 'edit') {
+            presetsEditorReloadPending = false
+            await reloadEditorLayoutIfNeeded()
+          }
         },
       })
       await layoutPresetsPanel.init()
@@ -1067,6 +1075,23 @@ export function mountCmsBar(root, options) {
       dirty = false
     }
 
+    if (!skipDirtyCheck && view !== currentView) {
+      const templateLeaveChecks = [
+        { panelView: 'templates', panel: templatesPanel },
+        { panelView: 'table-templates', panel: tableTemplatesPanel },
+        { panelView: 'layout-presets', panel: layoutPresetsPanel },
+      ]
+      for (const { panelView, panel } of templateLeaveChecks) {
+        if (currentView !== panelView || !panel?.confirmLeaveIfDirty) continue
+        const ok = await panel.confirmLeaveIfDirty()
+        if (!ok) {
+          if (historyMode === 'none') history.forward()
+          return
+        }
+        break
+      }
+    }
+
     if (currentView === 'edit' && view !== 'edit') {
       clearTimeout(saveTimer)
       if (isDraftNewCert && !currentCertId) {
@@ -1098,6 +1123,10 @@ export function mountCmsBar(root, options) {
     if (view === 'edit') {
       refreshSmartLayoutColumnOptions()
       syncNewCertPresetGate()
+      if (presetsEditorReloadPending) {
+        presetsEditorReloadPending = false
+        await reloadEditorLayoutIfNeeded()
+      }
     } else {
       syncSmartLayoutApplyButton()
     }
@@ -1660,6 +1689,22 @@ export function mountCmsBar(root, options) {
     highlightCertRow(id)
   }
 
+  async function reloadEditorLayoutIfNeeded() {
+    const hasCert = !!currentCertId || isDraftNewCert
+    if (!hasCert) return
+    if (!currentPresetId && !(options.getRowPresetIds?.() ?? []).some((id) => id != null && Number(id) > 0)) {
+      return
+    }
+    loadedPresetId = null
+    const row = options.getEditorState().selectedRow ?? 0
+    try {
+      await ensureLayoutForRow(row, { force: true })
+      await options.refreshPreviewForRow?.(row)
+    } catch (err) {
+      warnLayoutSwitch('reloadEditorLayoutIfNeeded:failed', { error: err.message })
+    }
+  }
+
   async function refreshPresets() {
     const res = await api.listPresets()
     presets = res.presets || []
@@ -1856,16 +1901,9 @@ export function mountCmsBar(root, options) {
     try {
       if (nextId) await assertPresetTableCompatible(nextId)
       options.setRowPresetId?.(rowIndex, nextId)
-      const s = options.getEditorState()
-      const selected = s.selectedRow ?? 0
-      const displayed = options.getPreviewDisplayedRow?.() ?? -1
-      const affectsPreview = selected === rowIndex || displayed === rowIndex
-      if (affectsPreview) {
-        await ensureLayoutForRow(rowIndex, { force: true, overwriteRowCustomSamples: true })
-      } else {
-        options.invalidateRowPresetCache?.(rowIndex)
-        logLayoutSwitch('applyRowPresetChange: 跳过全局布局（非当前预览行）', { rowIndex, selected, displayed })
-      }
+      await options.syncPreviewToRow?.(rowIndex)
+      await ensureLayoutForRow(rowIndex, { force: true, overwriteRowCustomSamples: true })
+      await options.refreshPreviewForRow?.(rowIndex)
       markDirty()
       options.onTableRefreshNeeded?.()
       status(nextId ? `第 ${rowIndex + 1} 行已设置布局` : `第 ${rowIndex + 1} 行已改为默认布局`)
@@ -2165,8 +2203,6 @@ export function mountCmsBar(root, options) {
       warnLayoutSwitch('applyLayoutPreset: preset 不存在', { presetId })
       return
     }
-    currentPresetId = presetId
-    syncPresetSelect(presetId)
     await syncCertGroupFromLayoutPreset(preset)
 
     const s = options.getEditorState()
@@ -2218,6 +2254,8 @@ export function mountCmsBar(root, options) {
       })
       loadedPresetId = presetId
     }
+    currentPresetId = presetId
+    syncPresetSelect(presetId)
     logLayoutSwitch('applyLayoutPreset:done', layoutSwitchSnapshot('done', { presetId, presetName: preset.name }))
     markDirty()
     status(`已应用布局模板：${preset.name}`)
@@ -2722,8 +2760,8 @@ export function mountCmsBar(root, options) {
       }
     }
 
+    const oldPresetId = currentPresetId
     try {
-      const oldPresetId = currentPresetId
       const s = options.getEditorState()
       const row = s.selectedRow ?? 0
       loadedPresetId = null
@@ -2754,8 +2792,17 @@ export function mountCmsBar(root, options) {
       syncNewCertPresetGate()
     } catch (err) {
       warnLayoutSwitch('presetSelect:failed', { error: err.message, stack: err.stack })
+      currentPresetId = oldPresetId
+      loadedPresetId = null
       status(err.message || '切换默认布局失败')
-      syncPresetSelect(currentPresetId)
+      syncPresetSelect(oldPresetId)
+      try {
+        const row = options.getEditorState().selectedRow ?? 0
+        await ensureLayoutForRow(row, { force: true })
+        await options.refreshPreviewForRow?.(row)
+      } catch (recoverErr) {
+        warnLayoutSwitch('presetSelect:recover-failed', { error: recoverErr.message })
+      }
     }
   })
 

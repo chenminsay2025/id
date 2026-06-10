@@ -95,6 +95,7 @@ export function mountTableTemplatesPanel(container, options = {}) {
   /** @type {Record<string, string>[]} */
   let draftRows = []
   let draftDirty = false
+  let saveInFlight = false
   let selectedRow = 0
   /** @type {ReturnType<typeof mountSpreadsheetTable> | null} */
   let spreadsheet = null
@@ -444,6 +445,13 @@ export function mountTableTemplatesPanel(container, options = {}) {
 
   saveBtn?.addEventListener('click', async () => {
     if (!currentId) return
+    if (saveInFlight) {
+      setEditorStatus('正在保存，请稍候…')
+      return
+    }
+    saveInFlight = true
+    saveBtn.disabled = true
+    try {
     collectDraftFromSpreadsheet()
     const cols = draftColumns.map((c) => c.trim()).filter(Boolean)
     const seen = new Set()
@@ -458,7 +466,6 @@ export function mountTableTemplatesPanel(container, options = {}) {
       setEditorStatus('至少保留一列', true)
       return
     }
-    try {
       const sampleRows = normalizeRowsForColumns(draftRows, cols)
       const groupId = readGroupSelectValue(container, 'tbl-tpl-edit-group', accessGroups, options.user)
       const payload = {
@@ -497,6 +504,9 @@ export function mountTableTemplatesPanel(container, options = {}) {
       options.onChange?.()
     } catch (err) {
       setEditorStatus(err.message || '保存失败', true)
+    } finally {
+      saveInFlight = false
+      saveBtn.disabled = false
     }
   })
 
@@ -649,6 +659,10 @@ export function mountTableTemplatesPanel(container, options = {}) {
         showListError(err.message || '加载表格模板失败')
       }
     },
+    hasUnsavedChanges() {
+      return draftDirty
+    },
+    confirmLeaveIfDirty: confirmDiscardDraft,
   }
 }
 

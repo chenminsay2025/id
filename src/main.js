@@ -1180,6 +1180,15 @@ async function selectPreviewRow(rowIndex, { restoreSelection = [], persistTable 
   }
 }
 
+/** 将表格选中行与预览分页对齐到指定行（布局列下拉不会触发行选中） */
+async function syncPreviewToRow(rowIndex) {
+  if (tableData.length === 0) return
+  const ri = Math.max(0, Math.min(rowIndex, tableData.length - 1))
+  selectedRow = ri
+  updatePreviewPagination()
+  ensureSpreadsheet().syncPageRowSelection?.(ri, selectedCol >= 0 ? selectedCol : -1)
+}
+
 /** 布局模板切换后强制重建当前行预览（编辑器上下文已更新，不再走 ensureLayoutForRow） */
 async function refreshPreviewForRow(rowIndex, options = {}) {
   previewDisplayedRow = -1
@@ -3258,6 +3267,7 @@ requireAdminSession()
       onTableRefreshNeeded: () => renderTable(),
       refreshPreviewForRow,
       getPreviewDisplayedRow: () => previewDisplayedRow,
+      syncPreviewToRow,
       onStatus: setStatus,
     })
     cms.mountEditor(document.querySelector('.app'))

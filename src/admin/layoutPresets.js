@@ -389,6 +389,9 @@ export function mountLayoutPresetsPanel(container, options = {}) {
   let currentId = null
   let draftDirty = false
   let saveInFlight = false
+  /** 串行化所有布局预设写库，避免 partial PUT 与全量保存竞态覆盖 */
+  /** @type {Promise<unknown>} */
+  let presetWriteChain = Promise.resolve()
   let autosaveTimer = null
   let statusClearTimer = null
   const AUTOSAVE_MS = 5 * 60_000
@@ -789,58 +792,94 @@ export function mountLayoutPresetsPanel(container, options = {}) {
     }
   }
 
+  function enqueuePresetWrite(fn) {
+    const run = presetWriteChain.then(() => fn())
+    presetWriteChain = run.catch(() => {})
+    return run
+  }
+
+  function syncEditorStateForPresetSave() {
+    readPageSizeFromInputs()
+    readPageNavColumnsFromUi()
+    if (!presetLoadReady) return
+    layoutEditor?.flushPendingState?.()
+    const pending = layoutEditor?.getPendingOverrides?.()
+    if (!pending) return
+    const prevOverrides = layoutOverrides
+    layoutOverrides = pruneLayoutOverridesForTable(pending, previewColumns)
+    migrateColumnLayoutStash(prevOverrides, layoutOverrides, previewColumns)
+    applyTableTemplateScopeToOverrides()
+  }
+
+  function presetUpdateBodyForCurrentEditor(body) {
+    if (!currentId || !presetLoadReady) return body
+    syncEditorStateForPresetSave()
+    if (body.layout_overrides != null) return body
+    return { ...body, layout_overrides: layoutOverridesForSave() }
+  }
+
+  async function updatePresetSerialized(presetId, body) {
+    const payload = presetId === currentId
+      ? presetUpdateBodyForCurrentEditor(body)
+      : body
+    return api.updatePreset(presetId, payload)
+  }
+
   async function saveCurrentPreset({ revisionNote = '保存', quiet = false } = {}) {
-    if (!currentId || saveInFlight) return false
-    saveInFlight = true
-    if (!quiet && statusEl) {
-      statusEl.classList.add('is-saving')
-      statusEl.textContent = '正在保存…'
-      statusEl.classList.remove('is-error')
-    }
-    try {
-      readPageSizeFromInputs()
-      const res = await api.updatePreset(currentId, {
-        layout_overrides: layoutOverridesForSave(),
-        preview_sample_row: getCustomSampleRowForSave(),
-        font_scale: fontScale,
-        show_layout_boxes: showLayoutBoxes,
-        show_reference_layer: showReferenceLayer,
-        show_template_layer: showTemplateLayer,
-        svg_template_id: getSelectedSvgTemplateId(),
-        table_template_id: getSelectedTableTemplateId(),
-        page_width_mm: pageWidthMm,
-        page_height_mm: pageHeightMm,
-        page_nav_column: readPageNavColumnsFromUi(),
-        record_revision: true,
-        revision_note: revisionNote,
-      })
-      if (res.preset && !verifyPresetTemplateRefsSaved(res.preset)) {
-        setStatus('布局已保存，但 SVG/表格模板关联未写入数据库。请 Ctrl+C 后重新运行 npm run dev:local', true)
+    if (!currentId) return false
+    return enqueuePresetWrite(async () => {
+      saveInFlight = true
+      if (!quiet && statusEl) {
+        statusEl.classList.add('is-saving')
+        statusEl.textContent = '正在保存…'
+        statusEl.classList.remove('is-error')
+      }
+      try {
+        syncEditorStateForPresetSave()
+        await waitForPreviewRebuild()
+        const res = await updatePresetSerialized(currentId, {
+          layout_overrides: layoutOverridesForSave(),
+          preview_sample_row: getCustomSampleRowForSave(),
+          font_scale: fontScale,
+          show_layout_boxes: showLayoutBoxes,
+          show_reference_layer: showReferenceLayer,
+          show_template_layer: showTemplateLayer,
+          svg_template_id: getSelectedSvgTemplateId(),
+          table_template_id: getSelectedTableTemplateId(),
+          page_width_mm: pageWidthMm,
+          page_height_mm: pageHeightMm,
+          page_nav_column: readPageNavColumnsFromUi(),
+          record_revision: true,
+          revision_note: revisionNote,
+        })
+        if (res.preset && !verifyPresetTemplateRefsSaved(res.preset)) {
+          setStatus('布局已保存，但 SVG/表格模板关联未写入数据库。请 Ctrl+C 后重新运行 npm run dev:local', true)
+          return false
+        }
+        draftDirty = false
+        if (currentId) capturePresetTabSession(currentId)
+        if (!quiet) {
+          setStatus(revisionNote === '自动保存' ? '已自动保存' : '布局已保存')
+        }
+        await refreshList(currentId)
+        renderPresetTabs()
+        options.onChange?.()
+        return true
+      } catch (err) {
+        setStatus(err.message || '保存失败', true)
         return false
+      } finally {
+        saveInFlight = false
+        statusEl?.classList.remove('is-saving')
       }
-      draftDirty = false
-      if (currentId) capturePresetTabSession(currentId)
-      if (!quiet) {
-        setStatus(revisionNote === '自动保存' ? '已自动保存' : '布局已保存')
-      }
-      await refreshList(currentId)
-      renderPresetTabs()
-      options.onChange?.()
-      return true
-    } catch (err) {
-      setStatus(err.message || '保存失败', true)
-      return false
-    } finally {
-      saveInFlight = false
-      statusEl?.classList.remove('is-saving')
-    }
+    })
   }
 
   function startAutosaveTimer() {
     clearInterval(autosaveTimer)
     autosaveTimer = setInterval(() => {
-      if (draftDirty && currentId && !saveInFlight && !presetLoading) {
-        void saveCurrentPreset({ revisionNote: '自动保存' })
+      if (draftDirty && currentId && !presetLoading) {
+        void saveCurrentPreset({ revisionNote: '自动保存', quiet: true })
       }
     }, AUTOSAVE_MS)
   }
@@ -1197,6 +1236,11 @@ export function mountLayoutPresetsPanel(container, options = {}) {
       presetTabSessionCache.set(presetId, {
         ...existing,
         presetId,
+        layoutOverrides: structuredClone(layoutOverrides),
+        fontScale,
+        sampleRow: structuredClone(sampleRow),
+        sampleAdornments: structuredClone(sampleAdornments),
+        columnLayoutStash: structuredClone(columnLayoutStash),
         editorTitle: editorTitleEl?.value?.trim() || existing.editorTitle || '',
         svgTemplateId: getSelectedSvgTemplateId(),
         tableTemplateId: getSelectedTableTemplateId(),
@@ -2250,11 +2294,12 @@ export function mountLayoutPresetsPanel(container, options = {}) {
   }
 
   async function persistPageNavColumn({ quiet = false } = {}) {
-    if (!currentId || pageNavColumnSaving) return false
+    if (!currentId) return false
+    return enqueuePresetWrite(async () => {
     pageNavColumnSaving = true
     const col = readPageNavColumnsFromUi()
     try {
-      const res = await api.updatePreset(currentId, {
+      const res = await updatePresetSerialized(currentId, {
         page_nav_column: col,
         record_revision: false,
       })
@@ -2278,15 +2323,17 @@ export function mountLayoutPresetsPanel(container, options = {}) {
     } finally {
       pageNavColumnSaving = false
     }
+    })
   }
 
   async function persistPresetTemplateRefs({ quiet = false } = {}) {
-    if (!currentId || templateRefsSaving) return false
+    if (!currentId) return false
+    return enqueuePresetWrite(async () => {
     templateRefsSaving = true
     const svgId = getSelectedSvgTemplateId()
     const tableId = getSelectedTableTemplateId()
     try {
-      const res = await api.updatePreset(currentId, {
+      const res = await updatePresetSerialized(currentId, {
         svg_template_id: svgId,
         table_template_id: tableId,
         record_revision: false,
@@ -2306,6 +2353,7 @@ export function mountLayoutPresetsPanel(container, options = {}) {
     } finally {
       templateRefsSaving = false
     }
+    })
   }
 
   function getSamplePageCount() {
@@ -3877,7 +3925,7 @@ export function mountLayoutPresetsPanel(container, options = {}) {
     const row = presets.find((p) => p.id === currentId)
     if (row?.name === name) return
     try {
-      await api.updatePreset(currentId, { name })
+      await enqueuePresetWrite(() => updatePresetSerialized(currentId, { name, record_revision: false }))
       patchPresetCache(currentId, { name })
       listEl.querySelectorAll('.layout-preset-list-name').forEach((el) => {
         const item = el.closest('.layout-preset-list-item')
@@ -4295,7 +4343,7 @@ export function mountLayoutPresetsPanel(container, options = {}) {
     const name = window.prompt('预设名称', row.name)
     if (name == null || !name.trim() || name.trim() === row.name) return
     try {
-      await api.updatePreset(id, { name: name.trim() })
+      await enqueuePresetWrite(() => updatePresetSerialized(id, { name: name.trim(), record_revision: false }))
       await refreshList(id)
       options.onChange?.()
     } catch (err) {
@@ -4354,6 +4402,10 @@ export function mountLayoutPresetsPanel(container, options = {}) {
       suspendLayoutEditorInput()
       showPreviewIdle()
     },
+    hasUnsavedChanges() {
+      return draftDirty
+    },
+    confirmLeaveIfDirty: confirmDiscardDraft,
   }
 }
 

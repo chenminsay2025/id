@@ -247,7 +247,30 @@ export function mountTemplatesPanel(container, options = {}) {
     return meta
   }
 
-  async function refreshList() {
+  function captureEditingSnapshots() {
+    return [...editingCardIds]
+      .map((id) => ({ id, draft: readCardDraft(id) }))
+      .filter((item) => item.draft)
+  }
+
+  function restoreEditingSnapshots(snapshots) {
+    for (const { id, draft } of snapshots) {
+      if (!templates.some((t) => t.id === id)) continue
+      const card = cardEl(id)
+      if (!card) continue
+      editingCardIds.add(id)
+      card.classList.add('is-editing')
+      const nameInput = card.querySelector('.tpl-card-edit .tpl-card-name-input')
+      if (nameInput) nameInput.value = draft.name
+      const groupEl = card.querySelector(`.tpl-card-edit #tpl-group-${id}`)
+      if (groupEl && draft.groupId != null) groupEl.value = String(draft.groupId)
+      setCardStatus(id, '')
+      syncCardDirtyState(id)
+    }
+  }
+
+  async function refreshList({ preserveEditing = false } = {}) {
+    const editingSnapshots = preserveEditing ? captureEditingSnapshots() : []
     const res = await api.listTemplates()
     templates = res.templates || []
     editingCardIds.clear()
@@ -333,6 +356,23 @@ export function mountTemplatesPanel(container, options = {}) {
     )
 
     syncAllCardDirtyStates()
+    if (preserveEditing && editingSnapshots.length) {
+      restoreEditingSnapshots(editingSnapshots)
+    }
+  }
+
+  function hasUnsavedChanges() {
+    for (const id of editingCardIds) {
+      if (isCardDirty(id)) return true
+    }
+    return false
+  }
+
+  async function confirmLeaveIfDirty() {
+    if (!hasUnsavedChanges()) return true
+    if (!window.confirm('SVG 模板有未保存修改，离开将丢失，继续？')) return false
+    for (const id of [...editingCardIds]) exitEditMode(id, { revert: true })
+    return true
   }
 
   async function saveCard(id) {
@@ -344,7 +384,10 @@ export function mountTemplatesPanel(container, options = {}) {
       setCardStatus(id, '名称不能为空', true)
       return
     }
-    if (!isCardDirty(id)) return
+    if (!isCardDirty(id)) {
+      setCardStatus(id, '没有需要保存的修改')
+      return
+    }
 
     savingCardIds.add(id)
     syncCardDirtyState(id)
@@ -550,12 +593,14 @@ export function mountTemplatesPanel(container, options = {}) {
       try {
         await ensureApiReady()
         accessGroups = await loadAccessibleGroups(true)
-        await refreshList()
+        await refreshList({ preserveEditing: true })
       } catch (err) {
         console.error(err)
         showListError(err.message || '加载模板列表失败')
       }
     },
+    hasUnsavedChanges,
+    confirmLeaveIfDirty,
   }
 }
 
