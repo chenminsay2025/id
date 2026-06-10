@@ -12890,6 +12890,14 @@ body.layout-collapsible-reorder-active * {
   background: #f8fafc;
 }
 
+.maint-module-lib-row--sep {
+  margin-top: 6px;
+  padding-top: 14px;
+  border-top: 1px dashed #cbd5e1;
+  border-radius: 8px 8px 0 0;
+  background: #fff;
+}
+
 .maint-module-lib-hint {
   font-size: 12px;
   color: var(--muted);

@@ -1,4 +1,5 @@
 import {
+  customSampleDisplayFromPreset,
   sampleAdornmentsFromPreset,
   resolveCertificateLayoutOverrides,
 } from '../src/presetSampleRow.js'
@@ -128,12 +129,14 @@ export function buildPresetRenderBundle(db, cert, presetId) {
 
   const previewSampleRow = parseJsonObject(preset.preview_sample_row)
   const sampleAdornments = sampleAdornmentsFromPreset(previewSampleRow, tableCols, mergedLayout)
+  const presetCustomSamples = customSampleDisplayFromPreset(previewSampleRow, tableCols, mergedLayout)
 
   return {
     preset_id: presetId,
     preset_name: preset.name || '',
     merged_layout_overrides: mergedLayout,
     sample_adornments: sampleAdornments,
+    preset_custom_samples: presetCustomSamples,
     table_template_columns: tableCols,
     page_width_mm: preset.page_width_mm,
     page_height_mm: preset.page_height_mm,

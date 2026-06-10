@@ -5,6 +5,7 @@ import {
   resolveBoxId,
   mergeCertificatePresetLayout,
 } from './layoutBinding.js'
+import { getColumnLayout, isLayoutBoxActive } from './svgEngine.js'
 import { normalizeColumnKey, resolveTemplateColumnOrder } from './zhColumnNormalize.js'
 import {
   SAMPLE_ADORN_KEY_PREFIX,
@@ -213,6 +214,28 @@ export function applySampleAdornmentsToDisplayRow(
     })
   }
 
+  return display
+}
+
+/**
+ * 自定义编辑框在表格行为空时，用布局预设 preview_sample_row 中的示例文案补全 SVG 展示（与后台编辑器一致）。
+ */
+export function applyPresetCustomSamplesToDisplayRow(
+  display,
+  tableColumns = [],
+  layoutOverrides = {},
+  presetCustomSamples = {},
+) {
+  const customIds = listCustomLayoutBoxIds(layoutOverrides, tableColumns)
+  for (const boxId of customIds) {
+    if (!isLayoutBoxActive(getColumnLayout(boxId, layoutOverrides))) continue
+    const existing = display[boxId]
+    if (existing != null && String(existing).trim() !== '') continue
+    const sample = presetCustomSamples[boxId]
+    if (sample != null && String(sample).trim() !== '') {
+      display[boxId] = sample
+    }
+  }
   return display
 }
 

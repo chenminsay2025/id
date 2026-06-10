@@ -550,4 +550,20 @@ export const api = {
     body: JSON.stringify(body),
   }),
   runAutoBackupNow: () => request('/api/maintenance/auto-backup/run-now', { method: 'POST', body: '{}' }),
+
+  exportFontSettingsBackup: () => request('/api/maintenance/export/font-settings'),
+  importFontSettingsBackup: (bundle, onConflict = 'update') => request('/api/maintenance/import/font-settings', {
+    method: 'POST',
+    body: JSON.stringify({ bundle, on_conflict: onConflict }),
+  }),
+  exportSiteSettingsBackup: () => request('/api/maintenance/export/site-settings'),
+  importSiteSettingsBackup: (bundle, onConflict = 'update') => request('/api/maintenance/import/site-settings', {
+    method: 'POST',
+    body: JSON.stringify({ bundle, on_conflict: onConflict }),
+  }),
+  exportAccessPermissionsBackup: () => request('/api/maintenance/export/access-permissions'),
+  importAccessPermissionsBackup: (bundle, onConflict = 'update') => request('/api/maintenance/import/access-permissions', {
+    method: 'POST',
+    body: JSON.stringify({ bundle, on_conflict: onConflict }),
+  }),
 }

@@ -18,6 +18,14 @@ import {
   runAutoBackup,
   saveAutoBackupConfig,
 } from './autoBackup.js'
+import {
+  exportFontSettings,
+  importFontSettings,
+  exportSiteSettings,
+  importSiteSettings,
+  exportAccessPermissions,
+  importAccessPermissions,
+} from './settingsBackup.js'
 
 const BACKUP_NAME_RE = /^cat-backup(-full)?-\d{4}-\d{2}-\d{2}_\d{6}\.(db|zip)$/
 
@@ -153,6 +161,51 @@ export function registerMaintenanceRoutes(app, { db, projectRoot, requireAuth, r
       return c.json({ ok: true, config: formatAutoBackupConfigForClient(db, projectRoot) })
     } catch (err) {
       return c.json({ error: err.message || '保存失败' }, 400)
+    }
+  })
+
+  app.get('/api/maintenance/export/font-settings', requireAuth, requireMaintenance, (c) => {
+    return c.json(exportFontSettings(db))
+  })
+
+  app.post('/api/maintenance/import/font-settings', requireAuth, requireMaintenance, async (c) => {
+    const body = await c.req.json().catch(() => ({}))
+    try {
+      const bundle = body.bundle ?? body
+      const result = importFontSettings(db, bundle, { onConflict: body.on_conflict })
+      return c.json({ ok: true, ...result })
+    } catch (err) {
+      return c.json({ error: err.message || '导入失败' }, 400)
+    }
+  })
+
+  app.get('/api/maintenance/export/site-settings', requireAuth, requireMaintenance, (c) => {
+    return c.json(exportSiteSettings(db))
+  })
+
+  app.post('/api/maintenance/import/site-settings', requireAuth, requireMaintenance, async (c) => {
+    const body = await c.req.json().catch(() => ({}))
+    try {
+      const bundle = body.bundle ?? body
+      const result = importSiteSettings(db, bundle, { onConflict: body.on_conflict })
+      return c.json({ ok: true, ...result })
+    } catch (err) {
+      return c.json({ error: err.message || '导入失败' }, 400)
+    }
+  })
+
+  app.get('/api/maintenance/export/access-permissions', requireAuth, requireMaintenance, (c) => {
+    return c.json(exportAccessPermissions(db))
+  })
+
+  app.post('/api/maintenance/import/access-permissions', requireAuth, requireMaintenance, async (c) => {
+    const body = await c.req.json().catch(() => ({}))
+    try {
+      const bundle = body.bundle ?? body
+      const result = importAccessPermissions(db, bundle, { onConflict: body.on_conflict })
+      return c.json({ ok: true, ...result })
+    } catch (err) {
+      return c.json({ error: err.message || '导入失败' }, 400)
     }
   })
 

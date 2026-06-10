@@ -3,6 +3,7 @@ import {
   parseSampleAdornment,
 } from '../src/sampleDialogSegments.js'
 import {
+  customSampleDisplayFromPreset,
   sampleAdornmentsFromPreset,
   resolveCertificateLayoutOverrides,
 } from '../src/presetSampleRow.js'
@@ -74,10 +75,28 @@ export function computeCertificateSampleAdornments(db, cert) {
   return sampleAdornmentsFromPreset(previewSampleRow, tableCols, layoutOverrides)
 }
 
-/** 发布/公开 API 用的渲染快照（前后缀、合并布局、表格列） */
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ preset_id?: number | null, table_template_id?: number | null, column_order?: string | null, layout_overrides?: string | null }} cert
+ */
+export function computeCertificatePresetCustomSamples(db, cert) {
+  if (!cert?.preset_id) return {}
+
+  const preset = db.prepare('SELECT preview_sample_row FROM layout_presets WHERE id = ?').get(cert.preset_id)
+  if (!preset) return {}
+
+  const previewSampleRow = parseJsonObject(preset.preview_sample_row)
+  const tableCols = resolveCertificateTableColumns(db, cert)
+  const layoutOverrides = resolveMergedLayoutOverrides(db, cert)
+
+  return customSampleDisplayFromPreset(previewSampleRow, tableCols, layoutOverrides)
+}
+
+/** 发布/公开 API 用的渲染快照（前后缀、合并布局、表格列、自定义框示例） */
 export function buildCertificatePublicSnapshot(db, cert) {
   return {
     sample_adornments: computeCertificateSampleAdornments(db, cert),
+    preset_custom_samples: computeCertificatePresetCustomSamples(db, cert),
     merged_layout_overrides: resolveMergedLayoutOverrides(db, cert),
     table_template_columns: resolveCertificateTableColumns(db, cert),
   }
@@ -101,6 +120,11 @@ export function resolveCertificatePublicSnapshot(db, cert) {
     sample_adornments: hasNonEmptyAdornments(snap.sample_adornments)
       ? snap.sample_adornments
       : fresh.sample_adornments,
+    preset_custom_samples: snap.preset_custom_samples
+      && typeof snap.preset_custom_samples === 'object'
+      && Object.keys(snap.preset_custom_samples).length
+      ? snap.preset_custom_samples
+      : fresh.preset_custom_samples,
     merged_layout_overrides: snap.merged_layout_overrides
       && typeof snap.merged_layout_overrides === 'object'
       && Object.keys(snap.merged_layout_overrides).length

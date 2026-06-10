@@ -85,11 +85,13 @@ export function registerPublicRoutes(app, ctx) {
         page_height_mm: pageSize.pageHeightMm,
         merged_layout_overrides: publicSnap.merged_layout_overrides,
         sample_adornments: publicSnap.sample_adornments,
+        preset_custom_samples: publicSnap.preset_custom_samples,
         table_template_columns: publicSnap.table_template_columns,
         preset_bundles: presetBundles,
         ...snap,
         merged_layout_overrides: publicSnap.merged_layout_overrides,
         sample_adornments: publicSnap.sample_adornments,
+        preset_custom_samples: publicSnap.preset_custom_samples,
         table_template_columns: publicSnap.table_template_columns,
       },
     })

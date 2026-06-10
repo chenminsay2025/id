@@ -225,8 +225,8 @@ export function mountMaintenancePanel(container, options = {}) {
                   <svg viewBox="0 0 24 24"><path fill="currentColor" d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm4 18H6V4h7v5h5v11z"/></svg>
                 </div>
                 <div>
-                  <h3 class="maint-card-title">模板库备份</h3>
-                  <p class="maint-card-desc">各模板库可单独备份/恢复，互不影响；SVG 为 .svg 文件 ZIP 包，表格/布局为 JSON。</p>
+                  <h3 class="maint-card-title">模块备份</h3>
+                  <p class="maint-card-desc">模板库、字体源、站点设置与权限管理可单独备份/恢复，互不影响；SVG 为 ZIP，其余为 JSON。</p>
                 </div>
               </div>
               <ul class="maint-module-lib-list">
@@ -250,6 +250,30 @@ export function mountMaintenancePanel(container, options = {}) {
                   <div class="maint-module-lib-actions">
                     <button type="button" class="button button-secondary button-sm" id="maint-export-layout" ${canWrite ? '' : 'disabled'}>导出</button>
                     <button type="button" class="button button-secondary button-sm" id="maint-import-layout" ${canWrite ? '' : 'disabled'}>导入</button>
+                  </div>
+                </li>
+                <li class="maint-module-lib-row maint-module-lib-row--sep">
+                  <span class="maint-module-lib-label">字体源</span>
+                  <span class="maint-module-lib-hint">字体列表与地址</span>
+                  <div class="maint-module-lib-actions">
+                    <button type="button" class="button button-secondary button-sm" id="maint-export-fonts" ${canWrite ? '' : 'disabled'}>导出</button>
+                    <button type="button" class="button button-secondary button-sm" id="maint-import-fonts" ${canWrite ? '' : 'disabled'}>导入</button>
+                  </div>
+                </li>
+                <li class="maint-module-lib-row">
+                  <span class="maint-module-lib-label">站点设置</span>
+                  <span class="maint-module-lib-hint">各组品牌与登录路径</span>
+                  <div class="maint-module-lib-actions">
+                    <button type="button" class="button button-secondary button-sm" id="maint-export-site" ${canWrite ? '' : 'disabled'}>导出</button>
+                    <button type="button" class="button button-secondary button-sm" id="maint-import-site" ${canWrite ? '' : 'disabled'}>导入</button>
+                  </div>
+                </li>
+                <li class="maint-module-lib-row">
+                  <span class="maint-module-lib-label">权限管理</span>
+                  <span class="maint-module-lib-hint">访问组与账号分配（不含密码）</span>
+                  <div class="maint-module-lib-actions">
+                    <button type="button" class="button button-secondary button-sm" id="maint-export-access" ${canWrite ? '' : 'disabled'}>导出</button>
+                    <button type="button" class="button button-secondary button-sm" id="maint-import-access" ${canWrite ? '' : 'disabled'}>导入</button>
                   </div>
                 </li>
               </ul>
@@ -874,12 +898,26 @@ export function mountMaintenancePanel(container, options = {}) {
     if (kind === 'table') {
       bundle = await api.exportTableTemplates()
       filename = `table-templates-${stamp}.json`
-    } else {
+    } else if (kind === 'layout') {
       bundle = await api.exportLayoutPresets()
       filename = `layout-presets-${stamp}.json`
+    } else if (kind === 'fonts') {
+      bundle = await api.exportFontSettingsBackup()
+      filename = `font-settings-${stamp}.json`
+    } else if (kind === 'site') {
+      bundle = await api.exportSiteSettingsBackup()
+      filename = `site-settings-${stamp}.json`
+    } else {
+      bundle = await api.exportAccessPermissionsBackup()
+      filename = `access-permissions-${stamp}.json`
     }
+    const count = bundle.item_count
+      ?? bundle.branding?.length
+      ?? bundle.config?.sources?.length
+      ?? bundle.groups?.length
+      ?? 0
     downloadJsonFile(filename, bundle)
-    showToast(moduleLibStatus, `已导出 ${filename}（${bundle.item_count ?? 0} 项）`)
+    showToast(moduleLibStatus, `已导出 ${filename}（${count} 项）`)
   }
 
   function readZipFile() {
@@ -914,11 +952,20 @@ export function mountMaintenancePanel(container, options = {}) {
         return
       }
       const bundle = await readJsonFile()
-      const result = kind === 'table'
-        ? await api.importTableTemplates(bundle, mode)
-        : await api.importLayoutPresets(bundle, mode)
+      let result
+      if (kind === 'table') {
+        result = await api.importTableTemplates(bundle, mode)
+      } else if (kind === 'layout') {
+        result = await api.importLayoutPresets(bundle, mode)
+      } else if (kind === 'fonts') {
+        result = await api.importFontSettingsBackup(bundle, mode)
+      } else if (kind === 'site') {
+        result = await api.importSiteSettingsBackup(bundle, mode)
+      } else {
+        result = await api.importAccessPermissionsBackup(bundle, mode)
+      }
       alertImportDetails(result)
-      showToast(moduleLibStatus, '模板库导入完成')
+      showToast(moduleLibStatus, '模块备份导入完成')
     } catch (err) {
       if (err.message !== '已取消') showToast(moduleLibStatus, err.message, true)
     }
@@ -941,6 +988,24 @@ export function mountMaintenancePanel(container, options = {}) {
   })
   container.querySelector('#maint-import-layout')?.addEventListener('click', () => {
     void importModuleLibrary('layout')
+  })
+  container.querySelector('#maint-export-fonts')?.addEventListener('click', () => {
+    exportModuleLibrary('fonts').catch((err) => showToast(moduleLibStatus, err.message, true))
+  })
+  container.querySelector('#maint-import-fonts')?.addEventListener('click', () => {
+    void importModuleLibrary('fonts')
+  })
+  container.querySelector('#maint-export-site')?.addEventListener('click', () => {
+    exportModuleLibrary('site').catch((err) => showToast(moduleLibStatus, err.message, true))
+  })
+  container.querySelector('#maint-import-site')?.addEventListener('click', () => {
+    void importModuleLibrary('site')
+  })
+  container.querySelector('#maint-export-access')?.addEventListener('click', () => {
+    exportModuleLibrary('access').catch((err) => showToast(moduleLibStatus, err.message, true))
+  })
+  container.querySelector('#maint-import-access')?.addEventListener('click', () => {
+    void importModuleLibrary('access')
   })
 
   return {

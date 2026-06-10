@@ -125,6 +125,7 @@ import {
   formatExcelImportColumnReportSummary,
   listUnmatchedExcelColumns,
   applySampleAdornmentsToDisplayRow,
+  applyPresetCustomSamplesToDisplayRow,
 } from './presetSampleRow.js'
 import {
   DEFAULT_PAGE_WIDTH_MM,
@@ -376,17 +377,12 @@ function getSvgRowData(rowIndex) {
     layoutOverrides,
     presetSampleAdornments,
   )
-  const customIds = listCustomLayoutBoxIds(layoutOverrides, getDefinedTableColumns())
-  for (const boxId of customIds) {
-    if (!isLayoutBoxActive(getColumnLayout(boxId, layoutOverrides))) continue
-    const existing = display[boxId]
-    if (existing != null && String(existing).trim() !== '') continue
-    const sample = presetCustomSamples[boxId]
-    if (sample != null && String(sample).trim() !== '') {
-      display[boxId] = sample
-    }
-  }
-  return display
+  return applyPresetCustomSamplesToDisplayRow(
+    display,
+    getDefinedTableColumns(),
+    layoutOverrides,
+    presetCustomSamples,
+  )
 }
 
 function refreshPreviewLayout(restoreSelection = [], { affectedColumns = null } = {}) {

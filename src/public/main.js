@@ -22,7 +22,10 @@ import {
 } from '../svgEngine.js'
 import { exportSvgToPdf, exportRowsToSinglePdf } from '../pdfExport.js'
 import { loadFontCatalog, ensureCatalogFontFaces } from '../fontCatalog.js'
-import { applySampleAdornmentsToDisplayRow } from '../presetSampleRow.js'
+import {
+  applySampleAdornmentsToDisplayRow,
+  applyPresetCustomSamplesToDisplayRow,
+} from '../presetSampleRow.js'
 import {
   diffAdornRow,
   exposePublicAdornDebug,
@@ -160,6 +163,8 @@ let showTemplateLayer = true
 let tableTemplateColumns = null
 /** @type {Record<string, { prefix: string[], suffix: string[] }>} 布局模板编辑框前后缀 */
 let sampleAdornments = {}
+/** @type {Record<string, string>} 布局模板自定义编辑框示例（如「自定-级别」） */
+let presetCustomSamples = {}
 
 const previewViewport = mountPreviewViewport(previewArea, {
   enableTouchGestures: true,
@@ -420,6 +425,9 @@ function applyRenderContextForRow(rowIndex) {
     if (bundle.sample_adornments) {
       sampleAdornments = structuredClone(bundle.sample_adornments)
     }
+    if (bundle.preset_custom_samples) {
+      presetCustomSamples = structuredClone(bundle.preset_custom_samples)
+    }
   }
   activeRenderPresetId = presetId
   return true
@@ -509,6 +517,12 @@ function adornRowForSvg(row) {
     layoutOverrides,
     sampleAdornments,
     debugFn,
+  )
+  applyPresetCustomSamplesToDisplayRow(
+    display,
+    tableColumns,
+    layoutOverrides,
+    presetCustomSamples,
   )
 
   if (isPublicAdornDebugEnabled()) {
@@ -1421,6 +1435,7 @@ function pickPublicRenderFields(certificate) {
   const linkedPreset = !!certificate?.preset_id
 
   let sampleAdornments = {}
+  let presetCustomSamples = {}
   if (hasNonEmptyAdornments(certificate?.sample_adornments)) {
     sampleAdornments = structuredClone(certificate.sample_adornments)
   } else if (linkedPreset) {
@@ -1430,6 +1445,17 @@ function pickPublicRenderFields(certificate) {
     }
   } else if (hasNonEmptyAdornments(snap?.sample_adornments)) {
     sampleAdornments = structuredClone(snap.sample_adornments)
+  }
+
+  if (certificate?.preset_custom_samples && typeof certificate.preset_custom_samples === 'object') {
+    presetCustomSamples = structuredClone(certificate.preset_custom_samples)
+  } else if (linkedPreset) {
+    const bundle = certificate?.preset_bundles?.[String(certificate.preset_id)]
+    if (bundle?.preset_custom_samples) {
+      presetCustomSamples = structuredClone(bundle.preset_custom_samples)
+    }
+  } else if (snap?.preset_custom_samples) {
+    presetCustomSamples = structuredClone(snap.preset_custom_samples)
   }
 
   const mergedLayout = certificate?.merged_layout_overrides
@@ -1443,7 +1469,7 @@ function pickPublicRenderFields(certificate) {
       ? [...snap.table_template_columns]
       : null
 
-  return { sampleAdornments, mergedLayout, tableTemplateColumns }
+  return { sampleAdornments, presetCustomSamples, mergedLayout, tableTemplateColumns }
 }
 
 async function ensurePublicRenderFields(id, certificate) {
@@ -1459,6 +1485,11 @@ async function ensurePublicRenderFields(id, certificate) {
         sampleAdornments: hasNonEmptyAdornments(snapshot.sample_adornments)
           ? structuredClone(snapshot.sample_adornments)
           : fields.sampleAdornments,
+        presetCustomSamples: snapshot.preset_custom_samples
+          && typeof snapshot.preset_custom_samples === 'object'
+          && Object.keys(snapshot.preset_custom_samples).length
+          ? structuredClone(snapshot.preset_custom_samples)
+          : fields.presetCustomSamples,
         mergedLayout: snapshot.merged_layout_overrides || fields.mergedLayout,
         tableTemplateColumns: Array.isArray(snapshot.table_template_columns) && snapshot.table_template_columns.length
           ? [...snapshot.table_template_columns]
@@ -1638,6 +1669,7 @@ function resetPublicViewerToSelectPrompt(message) {
   templateSvg = EMPTY_SVG_TEMPLATE
   tableTemplateColumns = null
   sampleAdornments = {}
+  presetCustomSamples = {}
   columnOrder = null
   previewDisplayedRow = -1
   rowSvgCache.clear()
@@ -1670,6 +1702,7 @@ function applyCertificateState(certificate, renderFields) {
   previewViewport.setPageAspectRatio(pageWidthMm, pageHeightMm)
   tableTemplateColumns = renderFields.tableTemplateColumns
   sampleAdornments = renderFields.sampleAdornments
+  presetCustomSamples = renderFields.presetCustomSamples || {}
   columnOrder = Array.isArray(certificate.column_order) && certificate.column_order.length
     ? [...certificate.column_order]
     : null
@@ -1686,8 +1719,10 @@ function schedulePreviewFitAfterSwitch(gen) {
 
 async function enrichPublicRenderFields(id, certificate, gen) {
   if (gen !== loadGeneration) return
-  const needsFetch = !hasNonEmptyAdornments(pickPublicRenderFields(certificate).sampleAdornments)
-    && !!certificate?.preset_id
+  const initialFields = pickPublicRenderFields(certificate)
+  const needsFetch = !!certificate?.preset_id
+    && (!hasNonEmptyAdornments(initialFields.sampleAdornments)
+      || !Object.keys(initialFields.presetCustomSamples || {}).length)
   if (!needsFetch) return
 
   const fields = await ensurePublicRenderFields(id, certificate)
@@ -1709,10 +1744,12 @@ async function enrichPublicRenderFields(id, certificate, gen) {
   }
 
   const changed = JSON.stringify(sampleAdornments) !== JSON.stringify(fields.sampleAdornments)
+    || JSON.stringify(presetCustomSamples) !== JSON.stringify(fields.presetCustomSamples)
     || JSON.stringify(getLayoutOverrides()) !== JSON.stringify(fields.mergedLayout)
   if (!changed) return
 
   sampleAdornments = fields.sampleAdornments
+  presetCustomSamples = fields.presetCustomSamples
   tableTemplateColumns = fields.tableTemplateColumns ?? tableTemplateColumns
   currentCert = {
     ...currentCert,
@@ -1721,6 +1758,7 @@ async function enrichPublicRenderFields(id, certificate, gen) {
   publicCertDataCache.set(id, {
     ...certificate,
     sample_adornments: fields.sampleAdornments,
+    preset_custom_samples: fields.presetCustomSamples,
     merged_layout_overrides: fields.mergedLayout,
     table_template_columns: fields.tableTemplateColumns ?? certificate.table_template_columns,
   })
