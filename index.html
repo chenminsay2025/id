@@ -15,7 +15,20 @@
     <div class="public-layout">
       <aside class="public-list-panel" id="public-list-panel">
         <header class="public-header">
-          <h1 id="public-list-title">已发布内容</h1>
+          <div class="public-header-row">
+            <span class="public-sidebar-brand" id="public-sidebar-brand" aria-hidden="true">猫</span>
+            <h1 id="public-list-title">已发布内容</h1>
+            <button
+              type="button"
+              class="public-sidebar-collapse-btn"
+              id="public-sidebar-collapse"
+              aria-label="收起侧栏"
+              aria-expanded="true"
+              title="收起侧栏"
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+            </button>
+          </div>
           <p class="public-hint">只读浏览，无编辑与发布权限。</p>
           <input
             type="search"
@@ -32,7 +45,7 @@
             <span class="public-user-avatar" id="public-user-avatar" aria-hidden="true">?</span>
             <span class="public-user-name" id="public-user-name"></span>
           </button>
-          <button type="button" class="btn btn-sm" id="public-logout">退出</button>
+          <button type="button" class="btn btn-sm public-logout-btn" id="public-logout" title="退出登录">退出</button>
         </footer>
       </aside>
       <main class="public-main">

@@ -1,0 +1,26 @@
+{
+  "$comment": "npm run git:push -- \"提交说明\"  只暂存 include 且不在 exclude 中的改动，然后 commit + push",
+  "include": [
+    "*.html",
+    "src/**",
+    "server/**",
+    "public/favicon.ico",
+    "public/apple-touch-icon.png",
+    "scripts/**",
+    "package.json",
+    "package-lock.json",
+    "vite.config.js",
+    "eslint.config.js",
+    "prettier.config.js",
+    "ico.png"
+  ],
+  "exclude": [
+    ".claude/**",
+    "layout-settings.json",
+    "public/layout-settings.json",
+    "_temp_*",
+    "data/**",
+    ".env",
+    ".env.*"
+  ]
+}

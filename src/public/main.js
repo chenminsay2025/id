@@ -128,6 +128,8 @@ const settingsDrawer = document.getElementById('public-settings-drawer')
 const settingsBackdrop = document.getElementById('public-settings-backdrop')
 const settingsClose = document.getElementById('public-settings-close')
 const listPanel = document.getElementById('public-list-panel')
+const sidebarCollapseBtn = document.getElementById('public-sidebar-collapse')
+const SIDEBAR_COLLAPSED_KEY = 'cat.public.sidebarCollapsed'
 const showLayoutBoxesInput = document.getElementById('public-show-layout-boxes')
 const showTemplateLayerInput = document.getElementById('public-show-template-layer')
 
@@ -1884,6 +1886,10 @@ menuToggle?.addEventListener('click', () => {
 })
 menuBackdrop?.addEventListener('click', closePublicMenu)
 
+sidebarCollapseBtn?.addEventListener('click', () => {
+  togglePublicSidebarCollapsed()
+})
+
 settingsToggle?.addEventListener('click', () => {
   setPublicSettingsOpen(!document.body.classList.contains('public-settings-open'))
 })
@@ -1905,11 +1911,49 @@ function handlePageJumpClick(e) {
   scheduleSelectRow(page)
 }
 
+function isPublicSidebarCollapseSupported() {
+  return !isPublicMobileLayout() && window.matchMedia('(min-width: 901px)').matches
+}
+
+function readPublicSidebarCollapsed() {
+  try {
+    return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function applyPublicSidebarCollapsed(collapsed) {
+  const supported = isPublicSidebarCollapseSupported()
+  const active = supported && collapsed
+  document.body.classList.toggle('public-sidebar-collapsed', active)
+  listPanel?.classList.toggle('is-collapsed', active)
+  if (sidebarCollapseBtn) {
+    sidebarCollapseBtn.hidden = !supported
+    sidebarCollapseBtn.setAttribute('aria-expanded', active ? 'false' : 'true')
+    const label = active ? '展开侧栏' : '收起侧栏'
+    sidebarCollapseBtn.setAttribute('aria-label', label)
+    sidebarCollapseBtn.title = label
+  }
+}
+
+function togglePublicSidebarCollapsed() {
+  if (!isPublicSidebarCollapseSupported()) return
+  const next = !document.body.classList.contains('public-sidebar-collapsed')
+  try {
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? '1' : '0')
+  } catch {
+    // ignore
+  }
+  applyPublicSidebarCollapsed(next)
+}
+
 function applyPublicResponsiveLayout() {
   const mobile = isPublicMobileLayout()
   const landscape = isPublicMobileLandscapeLayout()
   document.body.classList.toggle('public-layout-mobile', mobile)
   document.body.classList.toggle('public-layout-mobile-landscape', landscape)
+  applyPublicSidebarCollapsed(readPublicSidebarCollapsed())
   if (!mobile) {
     closePublicMenu()
     closePublicSettings()
@@ -2216,14 +2260,21 @@ function renderPublicCertList() {
     ? `<li class="public-empty-item">${escapeHtml(siteText('noPublishedEntity', cfg))}</li>`
     : list.length === 0
       ? `<li class="public-empty-item">${escapeHtml(siteText('noMatchEntity', cfg))}</li>`
-      : list.map((c) => `
+      : list.map((c) => {
+        const title = String(c.title || '').trim() || '—'
+        const initial = title.charAt(0) || '·'
+        return `
       <li>
-        <button type="button" class="public-cert-btn" data-id="${c.id}">
-          ${escapeHtml(c.title)}
-          <small>${formatTime(c.published_at)}</small>
+        <button type="button" class="public-cert-btn" data-id="${c.id}" title="${escapeAttr(title)}">
+          <span class="public-cert-btn-icon" aria-hidden="true">${escapeHtml(initial)}</span>
+          <span class="public-cert-btn-body">
+            ${escapeHtml(title)}
+            <small>${formatTime(c.published_at)}</small>
+          </span>
         </button>
       </li>
-    `).join('')
+    `
+      }).join('')
 
   listEl.querySelectorAll('.public-cert-btn').forEach((btn) => {
     btn.addEventListener('click', () => {

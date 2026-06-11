@@ -168,6 +168,12 @@ export function applyPublicPageBranding(cfg) {
   applyDocumentTitle(siteText('publishedEntity', c))
   const listTitle = document.getElementById('public-list-title')
   if (listTitle) listTitle.textContent = siteText('publishedEntity', c)
+  const sidebarBrand = document.getElementById('public-sidebar-brand')
+  if (sidebarBrand) {
+    const mark = String(c.brandMark || '').trim()
+    const entity = String(c.entityLabel || '证').trim()
+    sidebarBrand.textContent = mark || entity.charAt(0) || '·'
+  }
   const certSearchInput = document.getElementById('public-cert-search')
   if (certSearchInput) certSearchInput.placeholder = siteText('searchEntityTable', c)
 }

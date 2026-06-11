@@ -5003,6 +5003,7 @@ body.public-page {
   height: 100%;
   min-height: 0;
   overflow: hidden;
+  transition: grid-template-columns 0.2s ease;
 }
 
 .public-list-panel {
@@ -5012,6 +5013,181 @@ body.public-page {
   border-right: 1px solid var(--border);
   overflow: hidden;
   background: var(--surface);
+  transition: width 0.2s ease;
+}
+
+.public-header-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.public-header-row h1 {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.public-sidebar-brand {
+  display: none;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 32px;
+  text-align: center;
+}
+
+.public-sidebar-collapse-btn {
+  display: none;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--muted);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.public-sidebar-collapse-btn:hover {
+  border-color: #6366f1;
+  color: var(--text);
+  background: #f8fafc;
+}
+
+.public-sidebar-collapse-btn svg {
+  display: block;
+  transition: transform 0.2s ease;
+}
+
+.public-cert-btn-icon {
+  display: none;
+}
+
+.public-cert-btn-body {
+  display: block;
+  min-width: 0;
+}
+
+@media (min-width: 901px) {
+  .public-sidebar-collapse-btn {
+    display: inline-flex;
+  }
+
+  body.public-sidebar-collapsed .public-layout {
+    grid-template-columns: 56px 1fr;
+  }
+
+  body.public-sidebar-collapsed .public-sidebar-brand {
+    display: block;
+  }
+
+  body.public-sidebar-collapsed .public-header-row h1,
+  body.public-sidebar-collapsed .public-hint,
+  body.public-sidebar-collapsed .public-cert-search,
+  body.public-sidebar-collapsed .public-cert-search-summary,
+  body.public-sidebar-collapsed .public-cert-btn-body,
+  body.public-sidebar-collapsed .public-user-name,
+  body.public-sidebar-collapsed .public-empty-item {
+    display: none;
+  }
+
+  body.public-sidebar-collapsed .public-header {
+    padding: 10px 8px;
+  }
+
+  body.public-sidebar-collapsed .public-header-row {
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+
+  body.public-sidebar-collapsed .public-sidebar-collapse-btn svg {
+    transform: rotate(180deg);
+  }
+
+  body.public-sidebar-collapsed .public-cert-list {
+    padding: 6px 4px;
+  }
+
+  body.public-sidebar-collapsed .public-cert-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 4px;
+    text-align: center;
+  }
+
+  body.public-sidebar-collapsed .public-cert-btn-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: #f1f5f9;
+    color: #334155;
+    font-size: 13px;
+    font-weight: 600;
+    flex-shrink: 0;
+  }
+
+  body.public-sidebar-collapsed .public-cert-btn.active .public-cert-btn-icon {
+    background: #dbeafe;
+    color: #1d4ed8;
+  }
+
+  body.public-sidebar-collapsed .public-cert-btn.active {
+    box-shadow: none;
+    background: transparent;
+  }
+
+  body.public-sidebar-collapsed .public-sidebar-footer {
+    padding: 8px 6px 10px;
+    align-items: center;
+  }
+
+  body.public-sidebar-collapsed .public-user-chip {
+    justify-content: center;
+    padding: 6px;
+    border: none;
+    background: transparent;
+  }
+
+  body.public-sidebar-collapsed .public-user-chip:hover {
+    background: #f1f5f9;
+  }
+
+  body.public-sidebar-collapsed .public-logout-btn {
+    width: 32px;
+    min-width: 32px;
+    height: 32px;
+    padding: 0;
+    font-size: 0;
+    line-height: 0;
+    border-radius: 8px;
+    position: relative;
+  }
+
+  body.public-sidebar-collapsed .public-logout-btn::after {
+    content: '⎋';
+    font-size: 15px;
+    line-height: 1;
+    color: var(--text);
+  }
 }
 
 .public-cert-list {
@@ -5112,6 +5288,7 @@ body.public-page {
   color: var(--text);
   cursor: pointer;
   font-size: 13px;
+  line-height: 1.35;
 }
 
 .public-cert-btn:hover,

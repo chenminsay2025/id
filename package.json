@@ -29,7 +29,8 @@
     "lint:fix": "eslint --fix .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "make:favicon": "node scripts/make-favicon.mjs"
+    "make:favicon": "node scripts/make-favicon.mjs",
+    "git:push": "node scripts/git-push.mjs"
   },
   "dependencies": {
     "@hono/node-server": "^1.14.4",
