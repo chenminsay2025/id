@@ -1,6 +1,6 @@
-# 猫咪血统证书生成器
+# 证书生成PDF工具
 
-Vite 前端 + Node API（SQLite），支持单用户管理端与公众只读页。
+Vite 前端 + Node API（SQLite），证书/表格编辑、SVG 模板与 PDF 导出；支持管理端与公众只读页。
 
 ## 功能
 

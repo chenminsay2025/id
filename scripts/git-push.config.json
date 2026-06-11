@@ -1,6 +1,7 @@
 {
   "$comment": "npm run git:push -- \"提交说明\"  只暂存 include 且不在 exclude 中的改动，然后 commit + push",
   "include": [
+    "README.md",
     "*.html",
     "src/**",
     "server/**",
