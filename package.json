@@ -1,5 +1,6 @@
 {
   "name": "cat-svg-generator",
+  "description": "证书生成PDF工具",
   "private": true,
   "version": "1.0.0",
   "type": "module",

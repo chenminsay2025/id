@@ -59,12 +59,12 @@ export function mountSiteSettingsPanel(container, options = {}) {
         <div class="site-settings-grid">
           <label class="site-settings-field">
             <span class="site-settings-label">产品名称</span>
-            <input type="text" id="site-app-name" maxlength="40" placeholder="猫咪血统证书" />
+            <input type="text" id="site-app-name" maxlength="40" placeholder="证书PDF" />
             <span class="site-settings-hint">侧栏品牌标题</span>
           </label>
           <label class="site-settings-field">
             <span class="site-settings-label">完整名称</span>
-            <input type="text" id="site-app-name-full" maxlength="60" placeholder="猫咪血统证书生成器" />
+            <input type="text" id="site-app-name-full" maxlength="60" placeholder="证书生成PDF工具" />
             <span class="site-settings-hint">浏览器标签页默认标题</span>
           </label>
           <label class="site-settings-field">

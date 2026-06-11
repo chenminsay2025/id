@@ -145,7 +145,7 @@ export function migrateSiteBrandingByGroup(db) {
     `).run(
       defaultGroupId,
       String(data.appName || '猫咪血统证书').trim() || '猫咪血统证书',
-      String(data.appNameFull || '猫咪血统证书生成器').trim() || '猫咪血统证书生成器',
+      String(data.appNameFull || '证书生成PDF工具').trim() || '证书生成PDF工具',
       String(data.entityLabel || '证书').trim() || '证书',
       String(data.brandMark || '猫').trim() || '猫',
       ts,

@@ -30,8 +30,8 @@ export {
 
 export function defaultSiteConfig() {
   return {
-    appName: '猫咪血统证书',
-    appNameFull: '猫咪血统证书生成器',
+    appName: '证书PDF',
+    appNameFull: '证书生成PDF工具',
     entityLabel: '证书',
     brandMark: '猫',
     publicBaseUrl: '',
