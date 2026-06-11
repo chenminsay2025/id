@@ -60,6 +60,7 @@ import {
   clearPublicPageNavColumnOverride,
   filterPageNavColumnsToTable,
 } from '../publicPageNavPrefs.js'
+import { mountPublicRelationMap } from './relationMap.js'
 
 /** @type {import('../fontCatalog.js').FontCatalog | null} */
 let fontCatalog = null
@@ -168,6 +169,8 @@ let previewDisplayedRow = -1
 let previewFitPending = false
 /** @type {number | null} */
 let pendingCertId = null
+/** @type {Map<number, number>} 加载证书后跳转到指定行 */
+const pendingCertSelectRow = new Map()
 let certLoadRunner = false
 /** @type {ReturnType<typeof setTimeout> | 0} */
 let preloadTimer = 0
@@ -181,6 +184,8 @@ const publicTemplateSvgLoads = new Map()
 let loadedTemplateSvgId = null
 /** @type {ReturnType<typeof mountSpreadsheetTable> | null} */
 let spreadsheet = null
+/** @type {ReturnType<typeof mountPublicRelationMap> | null} */
+let relationMap = null
 /** @type {ReturnType<typeof mountLayoutEditor> | null} */
 let layoutEditor = null
 let showLayoutBoxes = false
@@ -441,14 +446,24 @@ async function finishSelectRow(idx, gen, _options, onSettled) {
   }
 }
 
-function scheduleLoadCertificate(id) {
+function scheduleLoadCertificate(id, options = {}) {
   switchGeneration += 1
   cancelPreload()
   setActiveCertListItem(id)
   const listTitle = catalog.find((c) => c.id === id)?.title
   if (titleEl) titleEl.textContent = listTitle || '加载中…'
+  if (Number.isFinite(options.selectRow)) {
+    pendingCertSelectRow.set(id, Math.max(0, options.selectRow))
+  }
   pendingCertId = id
   void runCertLoadQueue()
+}
+
+function takePendingSelectRow(certId, rowCount) {
+  const requested = pendingCertSelectRow.get(certId)
+  pendingCertSelectRow.delete(certId)
+  if (!Number.isFinite(requested) || rowCount <= 0) return 0
+  return Math.min(Math.max(0, requested), rowCount - 1)
 }
 
 async function runCertLoadQueue() {
@@ -1302,7 +1317,61 @@ function buildPageNavMetaHtml(rowIndex) {
   )
 }
 
+function getTableColumnsForCertificate(certificate) {
+  if (certificate.table_template_columns?.length) return [...certificate.table_template_columns]
+  if (certificate.column_order?.length) return [...certificate.column_order]
+  const rows = certificate.rows?.map((r) => r.row_data) ?? []
+  if (!rows.length) return []
+  const order = []
+  for (const row of rows) {
+    for (const k of Object.keys(row)) {
+      if (!order.includes(k)) order.push(k)
+    }
+  }
+  return order
+}
+
+function resolveRowPresetIdForCertificate(certificate, rowIndex) {
+  const row = certificate?.rows?.[rowIndex]
+  const rowId = row?.preset_id != null ? Number(row.preset_id) : null
+  if (rowId) return rowId
+  const certPresetId = certificate?.preset_id != null ? Number(certificate.preset_id) : null
+  return certPresetId || null
+}
+
+function getPresetBundlesForCertificate(certificate) {
+  return certificate.preset_bundles
+    || certificate.preview_ui?.public_snapshot?.preset_bundles
+    || {}
+}
+
+function getPageNavColumnsForCertificateRow(certificate, rowIndex) {
+  const tableColumns = getTableColumnsForCertificate(certificate)
+  const userOverride = loadPublicPageNavColumnOverride(certificate.id)
+  if (userOverride !== null) {
+    return filterPageNavColumnsToTable(userOverride, tableColumns)
+  }
+  const presetId = resolveRowPresetIdForCertificate(certificate, rowIndex)
+  const bundles = getPresetBundlesForCertificate(certificate)
+  const bundle = presetId ? bundles[String(presetId)] : null
+  return filterPageNavColumnsToTable(parsePageNavColumns(bundle?.page_nav_column), tableColumns)
+}
+
+function getPageNavRowLabelForCertificate(certificate, rowIndex) {
+  const row = certificate?.rows?.[rowIndex]?.row_data
+  if (!row) return ''
+  const cols = getPageNavColumnsForCertificateRow(certificate, rowIndex)
+  return getPageNavRowValues(row, cols).join(' · ')
+}
+
+function getPageNavRowLabelForCachedCert(certId, rowIndex) {
+  const certificate = publicCertDataCache.get(certId)
+  if (!certificate) return ''
+  return getPageNavRowLabelForCertificate(certificate, rowIndex)
+}
+
 function getPageNavRowLabel(rowIndex) {
+  if (currentCert) return getPageNavRowLabelForCertificate(currentCert, rowIndex)
   const cols = getPageNavColumnsForRow(rowIndex)
   if (!cols.length) return ''
   const row = getRows()[rowIndex]
@@ -1430,6 +1499,7 @@ function syncRowSelectionUi({ keepColumn = false } = {}) {
   ensureSpreadsheet().refreshSelectionVisuals?.()
   updateExportButtons()
   scrollPublicTableToSelectedRow()
+  relationMap?.updateSelection()
   if (syncRowCardRaf) cancelAnimationFrame(syncRowCardRaf)
   syncRowCardRaf = requestAnimationFrame(() => {
     syncRowCardRaf = 0
@@ -2148,7 +2218,8 @@ async function loadCertificate(id) {
     })
   })
 
-  selectedRow = 0
+  const initialRow = takePendingSelectRow(id, certificate.rows?.length ?? 0)
+  selectedRow = initialRow
   selectedCol = -1
   selectedColumnName = ''
   previewDisplayedRow = -1
@@ -2180,11 +2251,13 @@ async function loadCertificate(id) {
   }
 
   previewFitPending = true
-  preloadCertificateTemplateSvgs(certificate, { prioritizeId: resolveTemplateIdForRow(0) })
+  preloadCertificateTemplateSvgs(certificate, { prioritizeId: resolveTemplateIdForRow(initialRow) })
 
-  scheduleSelectRow(0, { keepColumn: false }, () => {
+  scheduleSelectRow(initialRow, { keepColumn: false }, () => {
     if (gen !== loadGeneration) return
     schedulePreviewFitAfterSwitch(gen)
+    const sheet = ensureSpreadsheet()
+    sheet.scrollToCell?.(initialRow, 0, { moveSelection: false })
   })
 
   void enrichPublicRenderFields(id, certificate, gen)
@@ -2286,6 +2359,45 @@ function renderPublicCertList() {
   if (currentCert?.id) setActiveCertListItem(currentCert.id)
 }
 
+async function loadPublicCertRowsForSearch(certId) {
+  let certificate = publicCertDataCache.get(certId)
+  if (!certificate) {
+    const res = await api.getPublicCertificate(certId, { includeSvg: false })
+    certificate = res.certificate
+    if (certificate) {
+      publicCertDataCache.set(certId, certificate)
+      updateCatalogTableSearchText(certId, certificate)
+    }
+  }
+  return certificate?.rows?.map((r) => r.row_data) ?? []
+}
+
+function jumpRelationMapHit({ certId, rowIndex }) {
+  const scrollToHitRow = () => {
+    const sheet = ensureSpreadsheet()
+    const ci = selectedCol >= 0 ? selectedCol : 0
+    sheet.scrollToCell?.(rowIndex, ci, { moveSelection: false })
+  }
+  if (currentCert?.id === certId) {
+    scheduleSelectRow(rowIndex, { keepColumn: false }, scrollToHitRow)
+    return
+  }
+  scheduleLoadCertificate(certId, { selectRow: rowIndex })
+}
+
+function ensureRelationMap() {
+  if (relationMap) return relationMap
+  relationMap = mountPublicRelationMap({
+    getCatalogItems: () => catalog.map((c) => ({ id: c.id, title: c.title })),
+    getCertificateRows: loadPublicCertRowsForSearch,
+    getRowPageNavLabel: getPageNavRowLabelForCachedCert,
+    getCurrentCertId: () => currentCert?.id ?? null,
+    getSelectedRow: () => selectedRow,
+    onJumpToHit: jumpRelationMapHit,
+  })
+  return relationMap
+}
+
 async function bootstrapPublicViewer() {
   applyPublicResponsiveLayout()
   PUBLIC_MOBILE_MQ.addEventListener('change', applyPublicResponsiveLayout)
@@ -2296,6 +2408,10 @@ async function bootstrapPublicViewer() {
   mountSplitResize()
   mountPageNavResize()
   wirePageNavColumnsSettingsUi()
+  ensureRelationMap()
+  document.getElementById('public-relation-map-toggle')?.addEventListener('click', () => {
+    ensureRelationMap().expandAndFocus()
+  })
   exposePublicAdornDebug(() => ({
     currentCertId: currentCert?.id ?? null,
     presetId: currentCert?.preset_id ?? null,
@@ -2325,8 +2441,10 @@ async function bootstrapPublicViewer() {
 
   catalog = listRes.certificates || []
   renderPublicCertList()
+  relationMap?.refresh()
   void ensureCatalogTableSearchText().then(() => {
     if (certSearch.trim()) renderPublicCertList()
+    relationMap?.refresh()
   })
 
   void warmupCatalogFonts(fontCfg)
