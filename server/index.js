@@ -540,7 +540,7 @@ app.get('/api/presets', requireAuth, (c) => {
   const gf = sqlGroupInClause(principal)
   const rows = db.prepare(`
     SELECT id, name, slug, group_id, font_scale, show_layout_boxes, is_default,
-      svg_template_id, table_template_id, created_at, updated_at
+      svg_template_id, table_template_id, page_nav_column, created_at, updated_at
     FROM layout_presets WHERE 1=1${gf.clause}
     ORDER BY sort_order ASC, id ASC
   `).all(...gf.params)
@@ -556,6 +556,7 @@ app.get('/api/presets', requireAuth, (c) => {
       group_id: row.group_id != null ? Number(row.group_id) : null,
       svg_template_id: row.svg_template_id != null ? Number(row.svg_template_id) : null,
       table_template_id: row.table_template_id != null ? Number(row.table_template_id) : null,
+      page_nav_column: normalizePageNavColumnStorage(row.page_nav_column),
     })
   }
   return c.json({ presets })

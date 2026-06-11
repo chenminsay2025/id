@@ -19,7 +19,12 @@ import {
   getColumnLayout,
   isLayoutBoxActive,
 } from './svgEngine.js'
-import { exportSvgToPdf, exportRowsToSinglePdf } from './pdfExport.js'
+import { exportSvgToPdf, exportRowsToSinglePdf, exportBatchPdf } from './pdfExport.js'
+import { parsePageNavColumns, formatPageNavRowLabel } from './pageNavColumn.js'
+import {
+  buildExportBasenameFromPageNavLabel,
+  sanitizeExportFilename,
+} from './exportFilename.js'
 import { loadFontCatalog, ensureCatalogFontFaces, setFontLoadErrorHandler } from './fontCatalog.js'
 import { mountFontNoticeBar, showFontNoticeErrors } from './admin/fontNotice.js'
 import { setFontReloadHook } from './fontReload.js'
@@ -97,9 +102,6 @@ import {
 import {
   getDefaultLayoutSettings,
   loadBakedLayoutSettingsFromServer,
-  buildDefaultLayoutSettingsFromCurrent,
-  saveDefaultLayoutSettingsToProject,
-  downloadDefaultLayoutSettings,
 } from './defaultLayoutSettings.js'
 import { EMPTY_SVG_TEMPLATE, loadSvgTemplateContentResult } from './svgTemplateLoader.js'
 import { requireAdminSession } from './admin/guard.js'
@@ -1311,7 +1313,7 @@ async function applyLegacyBrowserState(legacy) {
   fontScale = 1
   await flushLayoutSettingsSave(() => getLayoutSettingsPayload(), (msg) => {
     if (msg) setStatus(`已从浏览器迁移编辑框布局：${msg}`, 4000)
-    else setStatus('已迁移编辑框布局（请用 npm run dev 写入文件）', 5000)
+    else setStatus('已迁移编辑框布局', 5000)
   }, '迁移浏览器旧布局')
   return true
 }
@@ -2063,6 +2065,7 @@ function ensureLayoutPanel() {
     layoutOverrides,
     overlayShowBorder,
     overlayShowHandles,
+    showFileButtons: false,
     onOverlayVisualChange({ showBorder, showHandles }) {
       if (showBorder != null) overlayShowBorder = !!showBorder
       if (showHandles != null) overlayShowHandles = !!showHandles
@@ -2769,33 +2772,6 @@ $('#btn-clear-save').addEventListener('click', async () => {
   }, '重置编辑框布局')
 })
 
-$('#btn-save-as-default').addEventListener('click', async () => {
-  const payload = buildDefaultLayoutSettingsFromCurrent({
-    layoutOverrides,
-    fontScale,
-    showLayoutBoxes,
-    showReferenceLayer,
-    showTemplateLayer,
-  })
-  const colCount = Object.keys(payload.layoutOverrides).length
-  const ok = window.confirm(
-    `将当前编辑框布局写入项目内置默认配置？\n\n`
-    + `· 目标文件：src/default-layout-settings.json\n`
-    + `· 共 ${colCount} 个编辑框列\n`
-    + `· 「恢复默认编辑框」将使用此配置\n\n`
-    + `需在 npm run dev 下才能写入磁盘；写入后建议刷新页面。`,
-  )
-  if (!ok) return
-
-  const saved = await saveDefaultLayoutSettingsToProject(payload)
-  if (saved) {
-    setStatus(`已写入默认配置（${colCount} 列），请刷新页面使「恢复默认编辑框」生效`, 6000)
-  } else {
-    downloadDefaultLayoutSettings(payload)
-    setStatus('无法写入项目文件，已下载 default-layout-settings.json，请手动替换 src/ 下同名文件', 8000)
-  }
-})
-
 $('#btn-prev').addEventListener('click', () => {
   if (selectedRow > 0) {
     void selectPreviewRow(selectedRow - 1, { persistTable: true })
@@ -2948,7 +2924,7 @@ showTemplateLayerInput?.addEventListener('change', () => {
 
 $('#btn-reset-layout').addEventListener('click', () => {
   const def = getDefaultLayoutSettings()
-  applyLayoutSettings(def, '内置默认编辑框（src/default-layout-settings.json）', {
+  applyLayoutSettings(def, '默认编辑框', {
     applyToolbarToggles: false,
   })
   resetPreviewLayerToggles()
@@ -2962,14 +2938,44 @@ $('#btn-reset-layout').addEventListener('click', () => {
   flushSavePreviewSettings()
 })
 
+function getPageNavColumnForRow(rowIndex) {
+  const presetId = getEffectiveRowPresetId(rowIndex)
+  return window.__CAT_CMS__?.getPageNavColumnForPreset?.(presetId) ?? ''
+}
+
+function getEditorPageNavRowLabel(rowIndex) {
+  const row = tableData[rowIndex]
+  if (!row) return ''
+  const cols = parsePageNavColumns(getPageNavColumnForRow(rowIndex))
+  return formatPageNavRowLabel(row, cols)
+}
+
+function buildEditorExportFilenameForRow(rowIndex, ext, { includePageNumber = false } = {}) {
+  const base = buildExportBasenameFromPageNavLabel(getEditorPageNavRowLabel(rowIndex), {
+    pageIndex: rowIndex,
+    totalPages: tableData.length,
+    includePageNumber,
+  })
+  const cleanExt = String(ext || '').replace(/^\./, '')
+  return `${sanitizeExportFilename(base)}.${cleanExt}`
+}
+
+function getEditorCertListExportBasename() {
+  const cmsTitle = document.getElementById('cms-cert-title')?.value?.trim()
+  return sanitizeExportFilename(cmsTitle || `certificates-${tableData.length}`)
+}
+
+function buildEditorMergedPdfFilename() {
+  return `${getEditorCertListExportBasename()}.pdf`
+}
+
 $('#btn-export-svg').addEventListener('click', async () => {
   if (tableData.length === 0) return setStatus('没有数据')
   setStatus('正在导出 SVG（嵌入图片）…', 0)
   try {
     const svgEl = await getGenerator()(tableData[selectedRow], selectedRow)
     const blob = new Blob([await serializeSvgForExport(svgEl)], { type: 'image/svg+xml;charset=utf-8' })
-    const name = tableData[selectedRow]['编号'] || `cert-${selectedRow + 1}`
-    downloadBlob(blob, `${sanitizeFilename(name)}.svg`)
+    downloadBlob(blob, buildEditorExportFilenameForRow(selectedRow, 'svg'))
     setStatus('SVG 已导出')
   } catch (err) {
     console.error(err)
@@ -2982,8 +2988,11 @@ $('#btn-export-pdf').addEventListener('click', async () => {
   setStatus('正在生成 PDF…', 0)
   try {
     const svgEl = await getGenerator()(tableData[selectedRow], selectedRow)
-    const name = tableData[selectedRow]['编号'] || `cert-${selectedRow + 1}`
-    await exportSvgToPdf(svgEl, `${sanitizeFilename(name)}.pdf`, await resolvePdfExportOptions())
+    await exportSvgToPdf(
+      svgEl,
+      buildEditorExportFilenameForRow(selectedRow, 'pdf'),
+      await resolvePdfExportOptions(),
+    )
     setStatus('PDF 已导出')
   } catch (err) {
     console.error(err)
@@ -2997,11 +3006,16 @@ $('#btn-export-batch').addEventListener('click', async () => {
   btn.disabled = true
   setStatus('正在生成多页 PDF…', 0)
   try {
-    const cmsTitle = document.getElementById('cms-cert-title')?.value?.trim()
-    const filename = `${sanitizeFilename(cmsTitle || `certificates-${tableData.length}`)}.pdf`
-    await exportRowsToSinglePdf(tableData, getGenerator(), await resolvePdfExportOptions(), filename, (info) => {
-      setStatus(info?.detail || '正在生成…', 0)
-    })
+    await exportRowsToSinglePdf(
+      tableData,
+      getGenerator(),
+      await resolvePdfExportOptions(),
+      buildEditorMergedPdfFilename(),
+      (info) => {
+        setStatus(info?.detail || '正在生成…', 0)
+      },
+      { getPageLabel: (_row, i) => getEditorPageNavRowLabel(i) },
+    )
     setStatus(`已导出 ${tableData.length} 页 PDF`)
   } catch (err) {
     console.error(err)
@@ -3011,9 +3025,38 @@ $('#btn-export-batch').addEventListener('click', async () => {
   }
 })
 
-function sanitizeFilename(name) {
-  return String(name).replace(/[<>:"/\\|?*]/g, '_').slice(0, 80) || 'certificate'
-}
+$('#btn-export-batch-split').addEventListener('click', async () => {
+  if (tableData.length === 0) return setStatus('没有数据')
+  const btn = $('#btn-export-batch-split')
+  btn.disabled = true
+  setStatus('正在生成每页独立 PDF…', 0)
+  try {
+    const zipBasename = getEditorCertListExportBasename()
+    await exportBatchPdf(
+      tableData,
+      getGenerator(),
+      await resolvePdfExportOptions(),
+      {
+        zipBasename,
+        nameFn: (_row, index) =>
+          buildExportBasenameFromPageNavLabel(getEditorPageNavRowLabel(index), {
+            pageIndex: index,
+            totalPages: tableData.length,
+            includePageNumber: tableData.length > 1,
+          }),
+        onProgress: (current, total) => {
+          setStatus(`正在生成第 ${current}/${total} 页 PDF…`, 0)
+        },
+      },
+    )
+    setStatus(`已导出 ${tableData.length} 个 PDF（ZIP）`)
+  } catch (err) {
+    console.error(err)
+    setStatus('导出失败: ' + err.message)
+  } finally {
+    btn.disabled = false
+  }
+})
 
 function downloadBlob(blob, filename) {
   const a = document.createElement('a')

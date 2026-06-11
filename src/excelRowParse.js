@@ -52,7 +52,7 @@ export function parseExcelWorkbook(wb, options = {}, onProgress) {
       ? `工作表「${sheetName}」${rangeHint}，正在转换为二维数组…`
       : `工作表「${sheetName}」，正在转换为二维数组…`,
   })
-  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false })
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true })
 
   if (rows.length === 0) {
     return { columns: [], data: [], worksheet: ws, headerRow: [], headerRowIndex: 0, excelRowNumbers: [] }
@@ -92,8 +92,15 @@ export function parseExcelWorkbook(wb, options = {}, onProgress) {
     headers.forEach((h, j) => {
       if (!h) return
       const cellRef = XLSX.utils.encode_cell({ r: i, c: j })
-      const cell = ws[cellRef]
-      const rowVal = formatExcelWorksheetCell(cell, row[j] != null ? String(row[j]) : '')
+      let cell = ws[cellRef]
+      const rawVal = row[j]
+      if (!cell && rawVal instanceof Date) {
+        cell = { t: 'd', v: rawVal }
+      }
+      const fallback = cell
+        ? ''
+        : (rawVal != null && rawVal !== '' ? String(rawVal) : '')
+      const rowVal = formatExcelWorksheetCell(cell, fallback, wb)
       const raw = cell?.f ?? cell?.v ?? cell?.w ?? rowVal
       if (isDispImgFormula(raw)) {
         record[h] = raw.startsWith('=') ? raw : `=${raw}`

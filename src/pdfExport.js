@@ -223,15 +223,30 @@ export async function exportSvgToPdf(svgEl, filename, exportOptions = {}) {
   downloadPdfBlob(blob, filename)
 }
 
-/** 多行合并为一个多页 PDF
+/**
+ * 多行合并为一个多页 PDF
  * @param {(...args: any[]) => void} onProgress
  *   新式：onProgress({ phase, page?, total?, step?, detail?, percent?, stepId?, doneSteps? })
  *   旧式：onProgress(current, total, phase) 仍兼容
+ * @param {{ getPageLabel?: (row: Record<string, unknown>, index: number) => string }} [meta]
  */
-export async function exportRowsToSinglePdf(rows, generateFn, exportOptions, filename, onProgress) {
+export async function exportRowsToSinglePdf(rows, generateFn, exportOptions, filename, onProgress, meta = {}) {
   if (!rows.length) throw new Error('没有数据')
   const opts = pdfExportOptions(exportOptions)
   const total = rows.length
+  const getPageLabel = typeof meta.getPageLabel === 'function' ? meta.getPageLabel : null
+
+  const pageHeading = (pageIndex) => {
+    const n = pageIndex + 1
+    const label = getPageLabel ? String(getPageLabel(rows[pageIndex], pageIndex) || '').trim() : ''
+    return label ? `第 ${n}/${total} 页（${label}）` : `第 ${n}/${total} 页`
+  }
+
+  const outlineTitle = (pageIndex) => {
+    const n = pageIndex + 1
+    const label = getPageLabel ? String(getPageLabel(rows[pageIndex], pageIndex) || '').trim() : ''
+    return label ? `${n} ${label}` : `第 ${n} 页`
+  }
 
   const report = (payload) => {
     if (!onProgress) return
@@ -275,7 +290,7 @@ export async function exportRowsToSinglePdf(rows, generateFn, exportOptions, fil
     step: 'svg',
     stepId: 'pages',
     doneSteps: ['init', 'doc'],
-    detail: `第 1/${total} 页：正在生成证书 SVG…`,
+    detail: `${pageHeading(0)}：正在生成证书 SVG…`,
     percent: pagePercent(0, 'svg'),
   })
   const firstSvg = await generateFn(rows[0], 0)
@@ -293,7 +308,7 @@ export async function exportRowsToSinglePdf(rows, generateFn, exportOptions, fil
         step: 'svg',
         stepId: 'pages',
         doneSteps: ['init', 'doc'],
-        detail: `第 ${i + 1}/${total} 页：正在生成证书 SVG…`,
+        detail: `${pageHeading(i)}：正在生成证书 SVG…`,
         percent: pagePercent(i, 'svg'),
       })
     }
@@ -306,7 +321,7 @@ export async function exportRowsToSinglePdf(rows, generateFn, exportOptions, fil
       step: 'prepare',
       stepId: 'pages',
       doneSteps: ['init', 'doc'],
-      detail: `第 ${i + 1}/${total} 页：正在嵌入图片与字体…`,
+      detail: `${pageHeading(i)}：正在嵌入图片与字体…`,
       percent: pagePercent(i, 'prepare'),
     })
     const svgString = await prepareSvgString(svgEl, opts)
@@ -318,10 +333,13 @@ export async function exportRowsToSinglePdf(rows, generateFn, exportOptions, fil
       step: 'render',
       stepId: 'pages',
       doneSteps: ['init', 'doc'],
-      detail: `第 ${i + 1}/${total} 页：正在写入 PDF 矢量内容…`,
+      detail: `${pageHeading(i)}：正在写入 PDF 矢量内容…`,
       percent: pagePercent(i, 'render'),
     })
     renderSvgOnDoc(doc, svgString, fontSetup, opts)
+    if (doc.outline && typeof doc.outline.addItem === 'function') {
+      doc.outline.addItem(outlineTitle(i))
+    }
     report({
       phase: 'page',
       page: i + 1,
@@ -329,7 +347,7 @@ export async function exportRowsToSinglePdf(rows, generateFn, exportOptions, fil
       step: 'done',
       stepId: 'pages',
       doneSteps: ['init', 'doc'],
-      detail: `第 ${i + 1}/${total} 页已完成`,
+      detail: `${pageHeading(i)}已完成`,
       percent: pagePercent(i, 'render') + 1,
     })
     await yieldToMain()
@@ -362,11 +380,34 @@ export async function exportRowsToSinglePdf(rows, generateFn, exportOptions, fil
   })
 }
 
-/** 批量导出 ZIP（每行单独 PDF） */
-export async function exportBatchPdf(rows, generateFn, exportOptions, onProgress) {
+/**
+ * 批量导出 ZIP（每行单独 PDF）
+ * @param {Array<Record<string, unknown>>} rows
+ * @param {(row: Record<string, unknown>, index: number) => Promise<SVGSVGElement>} generateFn
+ * @param {object} exportOptions
+ * @param {{ nameFn?: (row: Record<string, unknown>, index: number) => string, zipBasename?: string, onProgress?: (current: number, total: number) => void }} [batchOptions]
+ */
+export async function exportBatchPdf(rows, generateFn, exportOptions, batchOptions = {}) {
+  if (!rows.length) throw new Error('没有数据')
   const opts = pdfExportOptions(exportOptions)
+  const { nameFn, zipBasename = 'certificates', onProgress } = batchOptions
   const JSZip = (await import('jszip')).default
   const zip = new JSZip()
+  const usedNames = new Set()
+
+  const resolveEntryName = (row, index) => {
+    let base = nameFn ? String(nameFn(row, index) || '').trim() : ''
+    if (!base) base = `cert-${index + 1}`
+    base = base.replace(/[<>:"/\\|?*]/g, '_').slice(0, 80) || `cert-${index + 1}`
+    let candidate = base
+    let suffix = 2
+    while (usedNames.has(candidate)) {
+      candidate = `${base}-${suffix}`
+      suffix += 1
+    }
+    usedNames.add(candidate)
+    return `${candidate}.pdf`
+  }
 
   for (let i = 0; i < rows.length; i++) {
     await yieldToMain()
@@ -375,12 +416,7 @@ export async function exportBatchPdf(rows, generateFn, exportOptions, onProgress
     const svgString = await prepareSvgString(svgEl, opts)
     await yieldToMain()
     const pdfBuffer = await svgStringToPdfBuffer(svgString, opts, svgEl)
-
-    const name =
-      rows[i]['编号']?.replace(/[<>:"/\\|?*]/g, '_') ||
-      rows[i]['猫舍']?.replace(/[<>:"/\\|?*\u4e00-\u9fff]/g, '_') ||
-      `cert-${i + 1}`
-    zip.file(`${name}.pdf`, pdfBuffer)
+    zip.file(resolveEntryName(rows[i], i), pdfBuffer)
     onProgress?.(i + 1, rows.length)
     await yieldToMain()
   }
@@ -389,5 +425,6 @@ export async function exportBatchPdf(rows, generateFn, exportOptions, onProgress
   await yieldToMain()
   const blob = await zip.generateAsync({ type: 'blob' })
   const { saveAs } = await import('file-saver')
-  saveAs(blob, 'certificates.zip')
+  const zipName = `${String(zipBasename || 'certificates').replace(/[<>:"/\\|?*]/g, '_').slice(0, 80) || 'certificates'}.zip`
+  saveAs(blob, zipName)
 }

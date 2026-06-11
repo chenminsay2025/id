@@ -17,49 +17,44 @@ async function request(path, options = {}) {
     data = {}
   }
   if (path.startsWith('/api/') && /^\s*<!DOCTYPE/i.test(text)) {
-    const err = new Error('API 请求返回了 HTML 而非 JSON（/api 代理异常）。请重启 npm run dev:local 并硬刷新页面')
+    const err = new Error('服务响应异常，请刷新页面后重试')
     err.status = res.status
     throw err
   }
   if (!res.ok) {
     let msg = data.error || (text && text.length < 200 ? text : '') || res.statusText || '请求失败'
     if (path.startsWith('/api/') && /^\s*<!DOCTYPE/i.test(text)) {
-      msg = 'API 请求返回了 HTML 而非 JSON（/api 代理异常）。请重启 npm run dev:local 并硬刷新页面'
+      msg = '服务响应异常，请刷新页面后重试'
     }
     if (res.status === 500 && !data.error) {
-      msg = '后端内部错误：请查看运行 npm run dev 的终端日志；若 API 未启动，先执行 npm run dev:local'
+      msg = '服务器内部错误，请稍后重试'
     }
     if (res.status === 403 && data.error?.includes('未完成安装')) {
       msg = data.error
     }
     if (res.status === 502 || res.status === 503) {
-      msg = '无法连接后端 (端口 3003)，请先 npm run dev:local 或 node server/index.js'
+      msg = '无法连接服务，请稍后重试'
     }
     if (res.status === 404 && path.startsWith('/api/templates')) {
-      msg = '模板接口不存在 (404)。请停止旧的后端进程后重新运行 npm run dev:server 或 npm start'
+      msg = '模板服务不可用，请刷新页面后重试'
     }
     if (res.status === 404 && path.includes('/api/settings/fonts')) {
-      msg =
-        '字体设置接口 404：3003 端口可能是旧进程。本地请 netstat/taskkill 释放 3003 后执行 npm run dev:local；服务器请更新 server/ 并 pm2 restart cat。可运行 npm run check:api 自检'
+      msg = '字体设置服务不可用，请刷新页面后重试'
     }
     if (res.status === 404 && path.includes('/api/media/upload')) {
-      msg =
-        '图片上传接口 404：3003 端口可能是旧版后端。请停止当前 dev 后重新运行 npm run dev:local（会自动结束旧进程），或执行 node scripts/kill-stale-api.mjs 后 npm run dev:server'
+      msg = '图片上传服务不可用，请刷新页面后重试'
     }
     if (res.status === 404 && path.includes('/api/presets/') && path.endsWith('/group')) {
-      msg = '布局模板所属组接口 404：3003 端口可能是旧进程。请 Ctrl+C 后执行 npm run dev:local（或 node scripts/kill-stale-api.mjs 后 npm run dev:server）'
+      msg = '布局模板服务不可用，请刷新页面后重试'
     }
     if (res.status === 404 && path.includes('/api/maintenance/auto-backup')) {
-      msg =
-        '自动备份接口 404：3003 端口可能是旧版后端。请 Ctrl+C 后执行 npm run dev:local，或 node scripts/kill-stale-api.mjs 后 npm run dev:server'
+      msg = '自动备份服务不可用，请刷新页面后重试'
     }
     if (res.status === 404 && path.includes('/api/auth/profile')) {
-      msg =
-        '账户中心接口 404：3003 端口可能是旧版后端。请 Ctrl+C 后执行 npm run dev:local，或 node scripts/kill-stale-api.mjs 后 npm run dev:server'
+      msg = '账户服务不可用，请刷新页面后重试'
     }
     if (res.status === 404 && path.includes('/api/settings/fonts/upload')) {
-      msg =
-        '字体上传接口 404：请重启后端（npm run dev:local）。本地字体将保存到 public/font/ 并以 /font/文件名 访问'
+      msg = '字体上传服务不可用，请刷新页面后重试'
     }
     const err = new Error(msg)
     err.status = res.status
@@ -85,8 +80,7 @@ async function uploadRequest(path, formData) {
   if (!res.ok) {
     let msg = data.error || res.statusText || '上传失败'
     if (res.status === 404 && path.includes('/api/media/upload')) {
-      msg =
-        '图片上传接口 404：请重启后端（npm run dev:local 或 node scripts/kill-stale-api.mjs 后 npm run dev:server）'
+      msg = '图片上传服务不可用，请刷新页面后重试'
     }
     const err = new Error(msg)
     err.status = res.status
@@ -112,8 +106,8 @@ function runWithBackupProgressPoll(onProgress, runRequest, progressMode = 'data'
       if (simulateTimer) return
       simulatedMode = mode
       const detail = mode === 'uploads'
-        ? '正在打包 uploads…（重启 npm run dev:local 后可显示逐步进度）'
-        : '正在创建数据库备份…（重启 npm run dev:local 后可显示逐步进度）'
+        ? '正在打包上传图片…'
+        : '正在创建数据库备份…'
       onProgress?.({
         stage: mode === 'uploads' ? 'uploads' : 'db',
         pct: simulatedPct,

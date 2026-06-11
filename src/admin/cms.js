@@ -2557,7 +2557,7 @@ export function mountCmsBar(root, options) {
     },
     onImport: async () => {
       try {
-        const mode = askImportConflictMode()
+        const mode = await askImportConflictMode()
         if (!mode) return
         const bundle = await readJsonFile()
         const result = await api.importCertificates(bundle, mode)
@@ -3039,6 +3039,17 @@ export function mountCmsBar(root, options) {
         return null
       }
     },
+    getPageNavColumnForPreset(presetId) {
+      const pid =
+        presetId != null && Number(presetId) > 0
+          ? Number(presetId)
+          : currentPresetId != null && Number(currentPresetId) > 0
+            ? Number(currentPresetId)
+            : null
+      if (!pid) return ''
+      const preset = presets.find((p) => Number(p.id) === pid)
+      return preset?.page_nav_column ?? ''
+    },
   }
 
   return {
@@ -3052,7 +3063,7 @@ export function mountCmsBar(root, options) {
         accessGroups = await loadAccessibleGroups(true)
         await Promise.all([refreshCertList(), refreshPresets(), refreshTemplates(), refreshTableTemplates()])
       } catch (err) {
-        status(err.message || '加载数据失败：请确认 npm run dev:local 已启动，然后刷新页面')
+        status(err.message || '加载数据失败，请刷新页面后重试')
         console.error('[CMS] init load failed', err)
       }
       syncViewPanels()

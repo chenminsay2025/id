@@ -10,7 +10,7 @@ export function mountFontsPanel(container) {
       <header class="wp-settings-header fonts-panel-header">
         <div>
           <h2 class="wp-settings-title">字体源</h2>
-          <p class="wp-settings-desc" id="font-env-hint">CDN 外链或本地 <code>/font</code> 路径 — 加载中…</p>
+          <p class="wp-settings-desc" id="font-env-hint">配置 CDN 或本站 <code>/font</code> 字体地址，按列表顺序加载。</p>
         </div>
         <button type="button" class="button button-primary button-sm" id="font-save">保存</button>
       </header>
@@ -457,14 +457,11 @@ export function mountFontsPanel(container) {
     return entries.map((entry) => {
       const kind = urlKindMeta(entry.url)
       const matchesEnv = detectFontUrlType(entry.url) === envType
-      const envBadge = matchesEnv
-        ? `<span class="fonts-env-badge" title="当前环境（${isLocalDev() ? '本地开发' : '服务器生产'}）优先使用此类型地址">🌐</span>`
-        : ''
       return `
       <div class="fonts-url-entry${entry.enabled ? ' is-active' : ''}${matchesEnv ? ' is-env-match' : ''}">
         <input type="radio" class="font-url-enabled" name="${escapeHtml(groupName)}" ${entry.enabled ? 'checked' : ''} title="当前地址" />
         <span class="fonts-tag-cell">
-          <span class="fonts-tag ${kind.className}">${kind.label}</span>${envBadge}
+          <span class="fonts-tag ${kind.className}">${kind.label}</span>
         </span>
         <input type="text" class="font-url" value="${escapeHtml(entry.url)}" list="font-url-suggestions" placeholder="https://… 或 /font/…" spellcheck="false" />
         ${renderTestBadge(sourceId, entry.url)}
@@ -878,21 +875,10 @@ export function mountFontsPanel(container) {
     saveConfig().catch((err) => setStatus(err.message || '保存失败', 'error'))
   })
 
-  /** 更新环境提示 */
-  function updateEnvHint() {
-    const hintEl = container.querySelector('#font-env-hint')
-    if (!hintEl) return
-    const envLabel = isLocalDev() ? '本地开发环境' : '服务器生产环境'
-    const prefType = envPreferredUrlType()
-    const prefLabel = prefType === 'local' ? '本地路径（/font/…）' : 'CDN 外链（https://…）'
-    hintEl.innerHTML = `当前为 <strong>${envLabel}</strong>，自动优先使用 ${prefLabel}`
-  }
-
   return {
     async init() {
       try {
         await loadConfig()
-        updateEnvHint()
       } catch (err) {
         setStatus(err.message || '加载失败', 'error')
       }

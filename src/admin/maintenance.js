@@ -134,7 +134,7 @@ export function mountMaintenancePanel(container, options = {}) {
                   <div class="maint-bundle-tile">
                     <div class="maint-bundle-tile__head">
                       <span class="maint-bundle-tile__title">uploads 图片</span>
-                      <span class="maint-bundle-tile__desc">上传目录 ZIP（解压合并到 data/uploads/）</span>
+                      <span class="maint-bundle-tile__desc">上传图片 ZIP 包</span>
                     </div>
                     <div class="maint-bundle-tile__actions">
                       <button type="button" class="maint-bundle-btn maint-bundle-btn--backup" id="maint-backup-uploads" ${canWrite ? '' : 'disabled'}>备份</button>
@@ -227,7 +227,7 @@ export function mountMaintenancePanel(container, options = {}) {
                   </div>
                   <div>
                     <h3 class="maint-card-title">自动备份</h3>
-                    <p class="maint-card-desc">服务运行期间按间隔备份下方勾选内容，文件名前缀 <code>backupdata-auto-</code></p>
+                    <p class="maint-card-desc">服务运行期间按间隔自动备份下方勾选内容。</p>
                   </div>
                   <span class="maint-badge" id="maint-auto-badge" data-state="off">未启用</span>
                 </div>
@@ -242,7 +242,6 @@ export function mountMaintenancePanel(container, options = {}) {
                   <div class="maint-auto-targets">
                     <span class="maint-form-label">备份内容</span>
                     <div class="maint-auto-targets-grid" id="maint-auto-targets-grid"></div>
-                    <span class="maint-form-hint">可勾选左侧全部备份项</span>
                   </div>
                   <div class="maint-form-grid">
                     <label class="maint-form-field">
@@ -256,7 +255,7 @@ export function mountMaintenancePanel(container, options = {}) {
                     </label>
                     <label class="maint-form-field maint-form-field--wide">
                       <span class="maint-form-label">保存目录</span>
-                      <input type="text" id="maint-auto-dir" class="maint-form-input" placeholder="data/backups" ${canWrite ? '' : 'disabled'} />
+                      <input type="text" id="maint-auto-dir" class="maint-form-input" placeholder="备份目录" ${canWrite ? '' : 'disabled'} />
                     </label>
                   </div>
                   <p class="maint-path-resolved" id="maint-auto-resolved" hidden></p>
@@ -286,7 +285,7 @@ export function mountMaintenancePanel(container, options = {}) {
                 </div>
                 <div>
                   <h3 class="maint-card-title">清理未使用图片</h3>
-                  <p class="maint-card-desc">扫描证书、布局/表格/SVG 模板、修订历史、站点设置与<strong>管理员头像</strong>等引用，删除 <code>data/uploads/</code> 中孤立文件（含 <code>cat-img:</code> 单元格图片）。</p>
+                  <p class="maint-card-desc">扫描证书、模板、修订历史、站点设置与<strong>管理员头像</strong>等引用，删除未被使用的上传图片。</p>
                 </div>
               </div>
               <div class="maint-cleanup-body">
@@ -307,6 +306,27 @@ export function mountMaintenancePanel(container, options = {}) {
           </div>
         </div>
       </div>
+
+      <dialog id="maint-restore-confirm-dialog" class="maint-restore-dialog">
+        <div class="maint-restore-dialog__inner">
+          <header class="maint-restore-dialog__head">
+            <div class="maint-restore-dialog__icon" id="maint-restore-dialog-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+            </div>
+            <div class="maint-restore-dialog__titles">
+              <h3 class="maint-restore-dialog__title" id="maint-restore-dialog-title">确认恢复</h3>
+              <p class="maint-restore-dialog__subtitle" id="maint-restore-dialog-subtitle"></p>
+            </div>
+          </header>
+          <div class="maint-restore-dialog__file" id="maint-restore-dialog-file"></div>
+          <ul class="maint-restore-dialog__warnings" id="maint-restore-dialog-warnings"></ul>
+          <p class="maint-restore-dialog__note" id="maint-restore-dialog-note"></p>
+          <footer class="maint-restore-dialog__actions">
+            <button type="button" class="button button-secondary button-sm" id="maint-restore-dialog-cancel">取消</button>
+            <button type="button" class="button button-sm maint-restore-dialog__confirm" id="maint-restore-dialog-confirm">确认恢复</button>
+          </footer>
+        </div>
+      </dialog>
 
       <dialog id="maint-upload-preview" class="maint-preview-dialog">
         <div class="maint-preview-inner">
@@ -356,6 +376,14 @@ export function mountMaintenancePanel(container, options = {}) {
   const autoBadge = container.querySelector('#maint-auto-badge')
   const cleanupGaugeFill = container.querySelector('#maint-cleanup-gauge-fill')
   const cleanupGaugeText = container.querySelector('#maint-cleanup-gauge-text')
+  const restoreConfirmDialog = container.querySelector('#maint-restore-confirm-dialog')
+  const restoreDialogTitle = container.querySelector('#maint-restore-dialog-title')
+  const restoreDialogSubtitle = container.querySelector('#maint-restore-dialog-subtitle')
+  const restoreDialogFile = container.querySelector('#maint-restore-dialog-file')
+  const restoreDialogWarnings = container.querySelector('#maint-restore-dialog-warnings')
+  const restoreDialogNote = container.querySelector('#maint-restore-dialog-note')
+  const restoreDialogConfirmBtn = container.querySelector('#maint-restore-dialog-confirm')
+  const restoreDialogCancelBtn = container.querySelector('#maint-restore-dialog-cancel')
   const previewDialog = container.querySelector('#maint-upload-preview')
   const previewTitle = container.querySelector('#maint-preview-title')
   const previewImg = container.querySelector('#maint-preview-img')
@@ -586,7 +614,7 @@ export function mountMaintenancePanel(container, options = {}) {
     renderAutoBackupTargets(config)
     if (config.resolved_dir) {
       autoResolved.hidden = false
-      autoResolved.textContent = `实际路径：${config.resolved_dir}`
+      autoResolved.textContent = `保存位置：${config.resolved_dir}`
     } else {
       autoResolved.hidden = true
     }
@@ -623,6 +651,86 @@ export function mountMaintenancePanel(container, options = {}) {
       backup_targets,
     }
   }
+
+  /** @type {null | ((ok: boolean) => void)} */
+  let restoreConfirmResolver = null
+
+  const RESTORE_CONFIRM_COPY = {
+    database: {
+      title: '恢复数据库',
+      subtitle: '将用所选备份覆盖当前 SQLite 数据库',
+      warnings: [
+        '当前证书、模板与设置数据将被备份文件内容替换',
+        '恢复前系统会自动创建一份安全备份（.db）',
+        '完成后建议刷新页面；若异常请重启后端服务',
+      ],
+      note: '此操作不可撤销（除安全备份外）。',
+      confirmLabel: '确认恢复数据库',
+    },
+    uploads: {
+      title: '恢复 uploads',
+      subtitle: '将备份包中的图片合并到上传目录',
+      warnings: [
+        '同名文件会被备份包中的版本覆盖',
+        '恢复前系统会自动打包当前 uploads 目录',
+        '不会删除备份包中未包含的现有文件',
+      ],
+      note: '适用于图片资源回滚，不影响数据库记录。',
+      confirmLabel: '确认恢复 uploads',
+    },
+  }
+
+  /**
+   * @param {'database' | 'uploads'} kind
+   * @param {File} file
+   */
+  function askRestoreConfirm(kind, file) {
+    const copy = RESTORE_CONFIRM_COPY[kind]
+    if (!copy || !restoreConfirmDialog) return Promise.resolve(false)
+
+    if (restoreDialogTitle) restoreDialogTitle.textContent = copy.title
+    if (restoreDialogSubtitle) restoreDialogSubtitle.textContent = copy.subtitle
+    if (restoreDialogFile) {
+      const sizeLabel = file.size ? formatBytes(file.size) : ''
+      restoreDialogFile.innerHTML = `
+        <span class="maint-restore-dialog__file-icon" aria-hidden="true">📄</span>
+        <span class="maint-restore-dialog__file-meta">
+          <strong class="maint-restore-dialog__file-name">${escapeHtml(file.name)}</strong>
+          ${sizeLabel ? `<span class="maint-restore-dialog__file-size">${escapeHtml(sizeLabel)}</span>` : ''}
+        </span>
+      `
+    }
+    if (restoreDialogWarnings) {
+      restoreDialogWarnings.innerHTML = copy.warnings
+        .map((line) => `<li>${escapeHtml(line)}</li>`)
+        .join('')
+    }
+    if (restoreDialogNote) restoreDialogNote.textContent = copy.note
+    if (restoreDialogConfirmBtn) restoreDialogConfirmBtn.textContent = copy.confirmLabel
+    restoreConfirmDialog.dataset.kind = kind
+
+    return new Promise((resolve) => {
+      restoreConfirmResolver = resolve
+      restoreConfirmDialog.showModal()
+    })
+  }
+
+  function closeRestoreConfirm(ok) {
+    restoreConfirmDialog?.close()
+    const resolver = restoreConfirmResolver
+    restoreConfirmResolver = null
+    resolver?.(ok)
+  }
+
+  restoreDialogCancelBtn?.addEventListener('click', () => closeRestoreConfirm(false))
+  restoreDialogConfirmBtn?.addEventListener('click', () => closeRestoreConfirm(true))
+  restoreConfirmDialog?.addEventListener('cancel', (e) => {
+    e.preventDefault()
+    closeRestoreConfirm(false)
+  })
+  restoreConfirmDialog?.addEventListener('click', (e) => {
+    if (e.target === restoreConfirmDialog) closeRestoreConfirm(false)
+  })
 
   function openUploadPreview(filename) {
     if (!previewDialog || !filename) return
@@ -680,8 +788,8 @@ export function mountMaintenancePanel(container, options = {}) {
         showToast(
           cleanupStatus,
           result.deleted_count
-            ? `扫描完成：${result.deleted_count} 个文件可清理（已排除账号头像；若列表仍异常请重启 npm run dev:local）`
-            : '扫描完成：未发现未使用的上传图片（后端 API 可能未更新，请重启 npm run dev:local）',
+            ? `扫描完成：${result.deleted_count} 个文件可清理（已排除账号头像）`
+            : '扫描完成：未发现未使用的上传图片',
           !result.deleted_count,
         )
       } else {
@@ -802,7 +910,7 @@ export function mountMaintenancePanel(container, options = {}) {
       showToast(dbStatus, '请选择 .db 备份文件', true)
       return
     }
-    if (!window.confirm(`确定用「${file.name}」恢复数据库吗？\n\n当前数据将被覆盖。`)) return
+    if (!await askRestoreConfirm('database', file)) return
     showRestoreProgress(true, '正在恢复数据库')
     updateBackupProgress({
       stage: 'validate',
@@ -832,7 +940,7 @@ export function mountMaintenancePanel(container, options = {}) {
       showToast(dbStatus, '请选择 uploads ZIP 备份文件', true)
       return
     }
-    if (!window.confirm(`确定用「${file.name}」恢复 uploads 吗？\n\n同名文件将被覆盖。`)) return
+    if (!await askRestoreConfirm('uploads', file)) return
     showRestoreProgress(true, '正在恢复 uploads')
     updateBackupProgress({
       stage: 'validate',
@@ -982,7 +1090,7 @@ export function mountMaintenancePanel(container, options = {}) {
   }
 
   async function importModuleLibrary(kind) {
-    const mode = askImportConflictMode()
+    const mode = await askImportConflictMode()
     if (!mode) return
     try {
       if (kind === 'svg') {

@@ -20,7 +20,11 @@ import {
   serializeSvgForExport,
   setActiveFontCatalog,
 } from '../svgEngine.js'
-import { exportSvgToPdf, exportRowsToSinglePdf } from '../pdfExport.js'
+import { exportSvgToPdf, exportRowsToSinglePdf, exportBatchPdf } from '../pdfExport.js'
+import {
+  buildExportBasenameFromPageNavLabel,
+  sanitizeExportFilename,
+} from '../exportFilename.js'
 import { loadFontCatalog, ensureCatalogFontFaces } from '../fontCatalog.js'
 import {
   applySampleAdornmentsToDisplayRow,
@@ -50,6 +54,12 @@ import {
   parsePageNavColumns,
   getPageNavRowValues,
 } from '../pageNavColumn.js'
+import {
+  loadPublicPageNavColumnOverride,
+  savePublicPageNavColumnOverride,
+  clearPublicPageNavColumnOverride,
+  filterPageNavColumnsToTable,
+} from '../publicPageNavPrefs.js'
 
 /** @type {import('../fontCatalog.js').FontCatalog | null} */
 let fontCatalog = null
@@ -90,6 +100,10 @@ const rowCardPresetEl = document.getElementById('public-row-card-preset')
 const rowCardFieldsEl = document.getElementById('public-row-card-fields')
 const prevBtn = document.getElementById('public-prev')
 const nextBtn = document.getElementById('public-next')
+const pageNavSettingsToggle = document.getElementById('public-page-nav-settings-toggle')
+const pageNavSettingsPanel = document.getElementById('public-page-nav-settings-panel')
+const pageNavColumnsEl = document.getElementById('public-page-nav-columns')
+const pageNavColumnsResetBtn = document.getElementById('public-page-nav-columns-reset')
 const zoomValueEl = document.getElementById('public-zoom-value')
 const publicContent = document.querySelector('.public-content')
 const tablePanel = document.querySelector('.public-table-panel')
@@ -106,6 +120,7 @@ const exportProgressSteps = document.getElementById('public-export-progress-step
 const btnExportSvg = document.getElementById('public-export-svg')
 const btnExportPdf = document.getElementById('public-export-pdf')
 const btnExportBatch = document.getElementById('public-export-batch')
+const btnExportBatchSplit = document.getElementById('public-export-batch-split')
 const menuToggle = document.getElementById('public-menu-toggle')
 const menuBackdrop = document.getElementById('public-menu-backdrop')
 const settingsToggle = document.getElementById('public-settings-toggle')
@@ -129,6 +144,9 @@ let catalog = []
 let certSearch = ''
 /** @type {object | null} */
 let currentCert = null
+/** @type {string[] | null} null 表示使用布局模板默认的页码栏显示列 */
+let userPageNavColumnOverride = null
+let pageNavColumnsUiWired = false
 let selectedRow = 0
 let selectedCol = -1
 let selectedColumnName = ''
@@ -665,8 +683,23 @@ async function buildSvgForExport(rowIndex) {
   )
 }
 
-function sanitizeFilename(name) {
-  return String(name).replace(/[<>:"/\\|?*]/g, '_').slice(0, 80) || 'certificate'
+function buildExportFilenameForRow(rowIndex, ext, { includePageNumber = false } = {}) {
+  const rows = getRows()
+  const base = buildExportBasenameFromPageNavLabel(getPageNavRowLabel(rowIndex), {
+    pageIndex: rowIndex,
+    totalPages: rows.length,
+    includePageNumber,
+  })
+  const cleanExt = String(ext || '').replace(/^\./, '')
+  return `${sanitizeExportFilename(base)}.${cleanExt}`
+}
+
+function getCertListExportBasename() {
+  return sanitizeExportFilename(currentCert?.title || 'certificate')
+}
+
+function buildMergedPdfFilename() {
+  return `${getCertListExportBasename()}.pdf`
 }
 
 function setExportStatus(msg, ms = 3000) {
@@ -1003,7 +1036,8 @@ function setExportProgress(opts = {}) {
     updateExportProgressSteps(opts.stepId, opts.doneSteps || [])
     const pagesLi = exportProgressSteps?.querySelector('.public-export-step[data-step="pages"]')
     if (pagesLi && opts.stepId === 'pages' && opts.page && opts.total) {
-      pagesLi.dataset.pagesLabel = `逐页生成（${opts.page}/${opts.total}）`
+      const navHint = opts.pageLabel ? ` · ${opts.pageLabel.replace(/^标识：/, '')}` : ''
+      pagesLi.dataset.pagesLabel = `逐页生成（${opts.page}/${opts.total}${navHint}）`
       pagesLi.textContent = pagesLi.dataset.pagesLabel
     }
   }
@@ -1037,7 +1071,7 @@ function applyPdfExportProgress(info) {
   }
 
   setExportProgress({
-    title: payload.phase === 'done' ? '导出完成' : '正在导出全部 PDF',
+    title: payload.phase === 'done' ? '导出完成' : '正在导出合并多页 PDF',
     message: payload.detail || '',
     percent: payload.percent,
     stepId: payload.stepId,
@@ -1075,14 +1109,14 @@ function hideExportProgress(delayMs = 0) {
 }
 
 function setExportControlsDisabled(disabled) {
-  for (const btn of [btnExportSvg, btnExportPdf, btnExportBatch]) {
+  for (const btn of [btnExportSvg, btnExportPdf, btnExportBatch, btnExportBatchSplit]) {
     if (btn) btn.disabled = disabled || !getRows().length
   }
 }
 
 function updateExportButtons() {
   const hasRows = getRows().length > 0
-  for (const btn of [btnExportSvg, btnExportPdf, btnExportBatch]) {
+  for (const btn of [btnExportSvg, btnExportPdf, btnExportBatch, btnExportBatchSplit]) {
     if (btn) btn.disabled = !hasRows
   }
 }
@@ -1106,10 +1140,148 @@ function mountStageWithSvg(svgEl) {
   previewViewport.setContent(stage)
 }
 
-function getPageNavColumnsForRow(rowIndex) {
+function getServerPageNavColumnsForRow(rowIndex) {
   const presetId = resolveRowPresetId(rowIndex)
   const bundle = getPresetBundle(presetId)
   return parsePageNavColumns(bundle?.page_nav_column)
+}
+
+function applyUserPageNavPrefsForCurrentCert() {
+  if (!currentCert?.id) {
+    userPageNavColumnOverride = null
+    return
+  }
+  const saved = loadPublicPageNavColumnOverride(currentCert.id)
+  if (saved === null) {
+    userPageNavColumnOverride = null
+    return
+  }
+  userPageNavColumnOverride = filterPageNavColumnsToTable(saved, getTableColumns())
+}
+
+function getPageNavColumnsForRow(rowIndex) {
+  if (userPageNavColumnOverride !== null) {
+    return userPageNavColumnOverride
+  }
+  return getServerPageNavColumnsForRow(rowIndex)
+}
+
+function getPageNavColumnsForSettingsUi() {
+  if (userPageNavColumnOverride !== null) return [...userPageNavColumnOverride]
+  return getServerPageNavColumnsForRow(0)
+}
+
+function persistUserPageNavColumns(columns) {
+  if (!currentCert?.id) return
+  userPageNavColumnOverride = filterPageNavColumnsToTable(columns, getTableColumns())
+  savePublicPageNavColumnOverride(currentCert.id, userPageNavColumnOverride)
+}
+
+function readPageNavColumnsFromSettingsUi() {
+  if (!pageNavColumnsEl) return []
+  const cols = getTableColumns()
+  const selected = []
+  for (const col of cols) {
+    const input = pageNavColumnsEl.querySelector(`input[data-page-nav-col="${CSS.escape(col)}"]`)
+    if (input?.checked) selected.push(col)
+  }
+  return selected
+}
+
+function renderPageNavColumnsSettings() {
+  if (!pageNavColumnsEl) return
+  const cols = getTableColumns()
+  if (!cols.length) {
+    pageNavColumnsEl.innerHTML = '<p class="public-page-nav-columns-empty">暂无表格列</p>'
+    return
+  }
+  const selected = new Set(getPageNavColumnsForSettingsUi())
+  pageNavColumnsEl.innerHTML = cols.map((col) => {
+    const checked = selected.has(col) ? ' checked' : ''
+    return (
+      `<label class="public-page-nav-col">`
+      + `<input type="checkbox" data-page-nav-col="${escapeHtml(col)}" value="${escapeHtml(col)}"${checked} />`
+      + `<span>${escapeHtml(col)}</span>`
+      + '</label>'
+    )
+  }).join('')
+}
+
+function positionPageNavSettingsPanel() {
+  if (!pageNavSettingsPanel || !pageNavSettingsToggle || pageNavSettingsPanel.hidden) return
+
+  const rect = pageNavSettingsToggle.getBoundingClientRect()
+  const panelRect = pageNavSettingsPanel.getBoundingClientRect()
+  const gap = 8
+  const margin = 8
+
+  let left = rect.left - panelRect.width - gap
+  let top = rect.top
+
+  if (left < margin) {
+    left = rect.right + gap
+  }
+  if (left + panelRect.width > window.innerWidth - margin) {
+    left = Math.max(margin, window.innerWidth - panelRect.width - margin)
+  }
+  if (top + panelRect.height > window.innerHeight - margin) {
+    top = Math.max(margin, window.innerHeight - panelRect.height - margin)
+  }
+
+  pageNavSettingsPanel.style.left = `${Math.round(left)}px`
+  pageNavSettingsPanel.style.top = `${Math.round(top)}px`
+}
+
+function setPageNavSettingsPanelOpen(open) {
+  if (!pageNavSettingsPanel || !pageNavSettingsToggle) return
+  pageNavSettingsPanel.hidden = !open
+  pageNavSettingsToggle.setAttribute('aria-expanded', open ? 'true' : 'false')
+  if (open) {
+    renderPageNavColumnsSettings()
+    requestAnimationFrame(() => positionPageNavSettingsPanel())
+  }
+}
+
+function closePageNavSettingsPanel() {
+  setPageNavSettingsPanelOpen(false)
+}
+
+function wirePageNavColumnsSettingsUi() {
+  if (pageNavColumnsUiWired) return
+  pageNavColumnsUiWired = true
+
+  pageNavSettingsToggle?.addEventListener('click', (e) => {
+    e.stopPropagation()
+    const open = pageNavSettingsPanel?.hidden !== false
+    setPageNavSettingsPanelOpen(open)
+  })
+
+  pageNavColumnsEl?.addEventListener('change', () => {
+    persistUserPageNavColumns(readPageNavColumnsFromSettingsUi())
+    updatePagination()
+  })
+
+  pageNavColumnsResetBtn?.addEventListener('click', () => {
+    if (currentCert?.id) clearPublicPageNavColumnOverride(currentCert.id)
+    userPageNavColumnOverride = null
+    renderPageNavColumnsSettings()
+    updatePagination()
+  })
+
+  document.addEventListener('click', (e) => {
+    if (pageNavSettingsPanel?.hidden) return
+    if (e.target.closest('.public-page-nav-settings-wrap')) return
+    if (e.target.closest('#public-page-nav-settings-panel')) return
+    closePageNavSettingsPanel()
+  })
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closePageNavSettingsPanel()
+  })
+
+  window.addEventListener('resize', () => {
+    if (!pageNavSettingsPanel?.hidden) positionPageNavSettingsPanel()
+  })
 }
 
 function buildPageNavMetaHtml(rowIndex) {
@@ -1604,7 +1776,7 @@ async function ensurePublicRenderFields(id, certificate) {
     warnPublicAdorn('render-snapshot-failed', {
       preset_id: certificate.preset_id,
       error: err?.message || String(err),
-      hint: '3003 端口可能是旧版 API。请 Ctrl+C 后重新运行 npm run dev:local',
+      hint: '渲染快照接口不可用',
     })
   }
 
@@ -1761,6 +1933,9 @@ function resetPublicViewerToSelectPrompt(message) {
   const cfg = getSiteConfig()
   const prompt = message ?? siteText('selectEntity', cfg)
   currentCert = null
+  userPageNavColumnOverride = null
+  closePageNavSettingsPanel()
+  renderPageNavColumnsSettings()
   selectedRow = 0
   selectedCol = -1
   selectedColumnName = ''
@@ -1837,7 +2012,7 @@ async function enrichPublicRenderFields(id, certificate, gen) {
     if (certificateHintsMissingAdornments(certificate)) {
       warnPublicAdornCritical('no-adornments-from-api', {
         preset_id: certificate.preset_id,
-        hint: '后台补拉 render-snapshot 仍无 sample_adornments。请重新发布证书，或 Ctrl+C 后重启 npm run dev:local',
+        hint: '前后缀数据缺失，请重新发布证书',
       })
     } else {
       logPublicAdorn('no-adornments-configured', {
@@ -1909,6 +2084,8 @@ async function loadCertificate(id) {
 
   const renderFields = pickPublicRenderFields(certificate)
   applyCertificateState(certificate, renderFields)
+  applyUserPageNavPrefsForCurrentCert()
+  renderPageNavColumnsSettings()
 
   groupPublicAdorn(`loadCertificate #${id}`, () => {
     logPublicAdorn('api-certificate', {
@@ -2067,6 +2244,7 @@ async function bootstrapPublicViewer() {
   })
   mountSplitResize()
   mountPageNavResize()
+  wirePageNavColumnsSettingsUi()
   exposePublicAdornDebug(() => ({
     currentCertId: currentCert?.id ?? null,
     presetId: currentCert?.preset_id ?? null,
@@ -2520,9 +2698,9 @@ btnExportSvg?.addEventListener('click', async () => {
   setExportStatus('正在导出 SVG…', 0)
   try {
     const svgEl = await buildSvgForExport(selectedRow)
-    const name = rows[selectedRow]['编号'] || `cert-${selectedRow + 1}`
+    const filename = buildExportFilenameForRow(selectedRow, 'svg')
     const blob = new Blob([await serializeSvgForExport(svgEl)], { type: 'image/svg+xml;charset=utf-8' })
-    downloadBlob(blob, `${sanitizeFilename(name)}.svg`)
+    downloadBlob(blob, filename)
     setExportStatus('SVG 已导出')
     trackActivity('svg_download')
   } catch (err) {
@@ -2538,8 +2716,8 @@ btnExportPdf?.addEventListener('click', async () => {
   btnExportPdf.disabled = true
   try {
     const svgEl = await buildSvgForExport(selectedRow)
-    const name = rows[selectedRow]['编号'] || `cert-${selectedRow + 1}`
-    await exportSvgToPdf(svgEl, `${sanitizeFilename(name)}.pdf`, pdfExportOptionsFromApp())
+    const filename = buildExportFilenameForRow(selectedRow, 'pdf')
+    await exportSvgToPdf(svgEl, filename, pdfExportOptionsFromApp())
     setExportStatus('PDF 已导出')
     trackActivity('pdf_download')
   } catch (err) {
@@ -2556,7 +2734,7 @@ btnExportBatch?.addEventListener('click', async () => {
   setExportControlsDisabled(true)
   exportProgressTotalPages = rows.length
   setExportProgress({
-    title: '正在导出全部 PDF',
+    title: '正在导出合并多页 PDF',
     message: '准备导出…',
     percent: 0,
     stepId: 'init',
@@ -2593,13 +2771,14 @@ btnExportBatch?.addEventListener('click', async () => {
         doneSteps: ['init', 'fonts'],
       })
     }
-    const filename = `${sanitizeFilename(currentCert?.title || `certificates-${rows.length}`)}.pdf`
+    const filename = buildMergedPdfFilename()
     await exportRowsToSinglePdf(
       rows,
       (_row, i) => buildSvgForExport(i),
       pdfExportOptionsFromApp(),
       filename,
       applyPdfExportProgress,
+      { getPageLabel: (_row, i) => getPageNavRowLabel(i) },
     )
     setExportStatus(`已导出 ${rows.length} 页 PDF`)
     hideExportProgress(2200)
@@ -2611,6 +2790,91 @@ btnExportBatch?.addEventListener('click', async () => {
     setExportControlsDisabled(false)
   }
 })
+
+btnExportBatchSplit?.addEventListener('click', async () => {
+  const rows = getRows()
+  if (!rows.length) return setExportStatus('没有数据')
+  setExportControlsDisabled(true)
+  exportProgressTotalPages = rows.length
+  setExportProgress({
+    title: '正在导出每页独立 PDF',
+    message: '准备导出…',
+    percent: 0,
+    stepId: 'init',
+    doneSteps: [],
+    total: rows.length,
+  })
+  try {
+    if (catalogFontsLoaded) {
+      exportFontsStepState = 'skipped'
+      exportProgressSkippedSteps.add('fonts')
+      exportProgressStepLabels.fonts = '预加载字体（已加载）'
+      setExportProgress({
+        message: '字体已预加载，跳过此步骤',
+        percent: 4,
+        stepId: 'fonts',
+        doneSteps: ['init', 'fonts'],
+        skippedSteps: ['fonts'],
+        stepLabels: { fonts: '预加载字体（已加载）' },
+      })
+    } else {
+      exportFontsStepState = 'loading'
+      setExportProgress({
+        message: '正在预加载证书字体…',
+        percent: 3,
+        stepId: 'fonts',
+        doneSteps: ['init'],
+      })
+      if (fontCatalog) await warmupCatalogFonts(fontCatalog)
+      exportFontsStepState = 'done'
+      setExportProgress({
+        message: '字体预加载完成',
+        percent: 5,
+        stepId: 'pages',
+        doneSteps: ['init', 'fonts'],
+      })
+    }
+    const zipBasename = getCertListExportBasename()
+    await exportBatchPdf(
+      rows,
+      (_row, i) => buildSvgForExport(i),
+      pdfExportOptionsFromApp(),
+      {
+        zipBasename,
+        nameFn: (_row, i) => buildRowExportBasenameForRow(i),
+        onProgress: (current, total) => {
+          const pct = 8 + Math.round((current / Math.max(1, total)) * 88)
+          setExportProgress({
+            message: `正在生成第 ${current}/${total} 页 PDF…`,
+            percent: pct,
+            stepId: 'pages',
+            page: current,
+            total,
+            doneSteps: ['init', 'fonts', 'doc'],
+          })
+        },
+      },
+    )
+    setExportStatus(`已导出 ${rows.length} 个 PDF（ZIP）`)
+    hideExportProgress(2200)
+    trackActivity('pdf_download', { details: { mode: 'batch_split', pages: rows.length } })
+  } catch (err) {
+    console.error(err)
+    hideExportProgress(0)
+    setExportStatus('导出失败: ' + (err.message || '未知错误'))
+  } finally {
+    setExportControlsDisabled(false)
+  }
+})
+
+function buildRowExportBasenameForRow(rowIndex) {
+  const rows = getRows()
+  return buildExportBasenameFromPageNavLabel(getPageNavRowLabel(rowIndex), {
+    pageIndex: rowIndex,
+    totalPages: rows.length,
+    includePageNumber: rows.length > 1,
+  })
+}
 
 function escapeHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')

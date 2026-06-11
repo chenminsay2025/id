@@ -187,9 +187,8 @@ async function runSave(getPayloadOrObject, onStatus, reason) {
 
   logPersistDone(reason, payload, { devOk: fileOk, fileOk: linkedOk })
   if (onStatus) {
-    if (fileOk) onStatus('已保存到 layout-settings.json')
-    else if (linkedOk) onStatus('已保存到链接的 JSON 文件')
-    else if (localOk) onStatus('已保存到浏览器（请运行 npm run dev 以写入项目文件）')
+    if (fileOk || linkedOk) onStatus('布局已保存')
+    else if (localOk) onStatus('布局已保存到浏览器')
     else onStatus('保存失败')
   }
   return fileOk || linkedOk || localOk

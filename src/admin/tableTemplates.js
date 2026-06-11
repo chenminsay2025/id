@@ -325,19 +325,19 @@ export function mountTableTemplatesPanel(container, options = {}) {
     try {
       meta = await api.meta()
     } catch {
-      throw new Error('无法连接后端 (端口 3003)。请执行 npm run dev:local 并刷新页面')
+      throw new Error('无法连接服务，请刷新页面后重试')
     }
     if (!Array.isArray(meta?.features)) {
-      throw new Error('后端 API 响应异常。请确认 npm run dev:local 已启动，然后硬刷新页面 (Ctrl+Shift+R)')
+      throw new Error('服务响应异常，请刷新页面后重试')
     }
     if (!meta.features.includes('table_templates')) {
-      throw new Error('后端版本过旧，缺少表格模板功能。请重启 npm run dev:server')
+      throw new Error('表格模板功能不可用，请刷新页面后重试')
     }
     if (!meta.features?.includes('table_template_sample_rows')) {
-      throw new Error('后端 API 过旧，无法保存示例行。请 Ctrl+C 停止后重新运行 npm run dev:local')
+      throw new Error('示例行保存功能不可用，请刷新页面后重试')
     }
     if (!meta.features?.includes('media_upload')) {
-      throw new Error('后端未启用图片上传（media_upload）。请重启 npm run dev:server')
+      throw new Error('图片上传功能不可用，请刷新页面后重试')
     }
     return meta
   }
@@ -479,7 +479,7 @@ export function mountTableTemplatesPanel(container, options = {}) {
         : sampleRows
       const savedCount = res.template?.sample_row_count ?? savedRows.length
       if (sampleRows.length > 0 && savedCount === 0) {
-        setEditorStatus('保存失败：服务端未写入示例行。请停止 dev 后重新运行 npm run dev:local', true)
+        setEditorStatus('保存失败：示例行未写入，请刷新页面后重试', true)
         return
       }
       draftColumns = cols
@@ -625,7 +625,7 @@ export function mountTableTemplatesPanel(container, options = {}) {
     },
     onImport: async () => {
       try {
-        const mode = askImportConflictMode()
+        const mode = await askImportConflictMode()
         const bundle = await readJsonFile()
         const result = await api.importTableTemplates(bundle, mode)
         alertImportDetails(result)

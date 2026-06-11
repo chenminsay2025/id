@@ -103,7 +103,8 @@
                     <div class="public-export-controls">
                       <button type="button" class="btn btn-sm" id="public-export-svg" disabled>导出 SVG</button>
                       <button type="button" class="btn btn-sm btn-primary" id="public-export-pdf" disabled>导出 PDF</button>
-                      <button type="button" class="btn btn-sm btn-primary" id="public-export-batch" disabled>导出全部 PDF</button>
+                      <button type="button" class="btn btn-sm btn-primary" id="public-export-batch" disabled>导出合并多页 PDF</button>
+                      <button type="button" class="btn btn-sm btn-primary" id="public-export-batch-split" disabled>导出 PDF 每页独立文件</button>
                       <span class="public-export-status" id="public-export-status"></span>
                     </div>
                   </section>
@@ -143,6 +144,16 @@
             </div>
             <div class="public-preview-frame">
               <nav class="public-page-nav" id="public-page-nav" aria-label="翻页" hidden>
+                <div class="public-page-nav-settings-wrap">
+                  <button
+                    type="button"
+                    class="public-page-nav-settings-btn"
+                    id="public-page-nav-settings-toggle"
+                    aria-expanded="false"
+                    aria-controls="public-page-nav-settings-panel"
+                    title="设置页码栏显示列"
+                  >显示项</button>
+                </div>
                 <button type="button" class="public-page-nav-btn public-page-nav-btn--prev" id="public-prev" disabled aria-label="上一页" title="上一页">
                   <span class="public-page-nav-icon" aria-hidden="true">‹</span>
                   <span class="public-page-nav-label">上一页</span>
@@ -156,6 +167,18 @@
                   <span class="public-page-nav-icon" aria-hidden="true">›</span>
                 </button>
               </nav>
+              <div
+                id="public-page-nav-settings-panel"
+                class="public-page-nav-settings-panel"
+                hidden
+                role="dialog"
+                aria-label="页码栏显示列"
+              >
+                <p class="public-page-nav-settings-title">页码栏显示列</p>
+                <p class="public-page-nav-settings-hint">勾选后显示在页码列表，并用于导出文件名；设置保存在本浏览器。</p>
+                <div id="public-page-nav-columns" class="public-page-nav-columns" role="group" aria-label="页码栏显示列"></div>
+                <button type="button" class="btn btn-sm public-page-nav-columns-reset" id="public-page-nav-columns-reset">恢复默认</button>
+              </div>
               <div
                 class="public-page-nav-resize-handle"
                 id="public-page-nav-resize"

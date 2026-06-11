@@ -192,7 +192,7 @@ export function siteText(key, cfg) {
     newEntityPrompt: `新${e}标题`,
     untitled: untitledName(c),
     newBatch: newBatchName(c),
-    loginHint: `单用户模式，用于编辑${e}与布局预设。本地默认见 .env（admin / admin1234）；若安装向导设过密码请用当时密码，或运行 npm run reset:admin。`,
+    loginHint: '',
   }
   return map[key] || key
 }

@@ -14,7 +14,7 @@ export function mountTemplatesPanel(container, options = {}) {
       <header class="wp-settings-header">
         <div>
           <h2 class="wp-settings-title">SVG 模板库</h2>
-          <p class="wp-settings-desc">在此上传、替换或删除多个 SVG 文件（保存到服务器 data/svg-templates/ 目录）。每张证书使用哪套模板，请在「证书编辑」页面的「本证书模板」中选择，不在此页指定。模板按<strong>访问组</strong>隔离，仅同组管理员可见。</p>
+          <p class="wp-settings-desc">在此上传、替换或删除 SVG 模板文件。每张证书使用哪套模板，请在「证书编辑」页面选择。模板按<strong>访问组</strong>隔离，仅同组管理员可见。</p>
         </div>
         <div class="templates-header-actions">
           <button type="button" class="button button-primary" id="tpl-new">上传 SVG</button>
@@ -239,13 +239,13 @@ export function mountTemplatesPanel(container, options = {}) {
     try {
       meta = await api.meta()
     } catch {
-      throw new Error('无法连接后端 (端口 3003)。请执行 npm run dev:local 并刷新页面')
+      throw new Error('无法连接服务，请刷新页面后重试')
     }
     if (!Array.isArray(meta?.features)) {
-      throw new Error('后端 API 响应异常（/api 可能被错误拦截）。请硬刷新页面 (Ctrl+Shift+R)，或重启 npm run dev:local')
+      throw new Error('服务响应异常，请刷新页面后重试')
     }
     if (!meta.features.includes('svg_templates')) {
-      throw new Error('后端版本过旧，缺少 SVG 模板功能。请重启 npm run dev:server')
+      throw new Error('SVG 模板功能不可用，请刷新页面后重试')
     }
     return meta
   }

@@ -1,6 +1,17 @@
 /** @param {unknown} raw */
 export function parsePageNavColumns(raw) {
   if (raw == null) return []
+  if (Array.isArray(raw)) {
+    const seen = new Set()
+    const out = []
+    for (const item of raw) {
+      const col = String(item ?? '').trim()
+      if (!col || seen.has(col)) continue
+      seen.add(col)
+      out.push(col)
+    }
+    return out
+  }
   const s = String(raw).trim()
   if (!s) return []
   if (s.startsWith('[')) {

@@ -28,5 +28,5 @@ api.me()
   .catch((err) => {
     errEl.textContent =
       err.message ||
-      '无法连接后端，请用 Node 20+ 启动：双击 scripts\\dev-win.cmd 或 npm run dev:local'
+      '无法连接服务，请稍后重试或联系管理员'
   })

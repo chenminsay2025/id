@@ -901,7 +901,7 @@ export function mountLayoutPresetsPanel(container, options = {}) {
           revision_note: revisionNote,
         })
         if (res.preset && !verifyPresetTemplateRefsSaved(res.preset)) {
-          setStatus('布局已保存，但 SVG/表格模板关联未写入数据库。请 Ctrl+C 后重新运行 npm run dev:local', true)
+          setStatus('布局已保存，但模板关联未写入，请刷新页面后重试', true)
           return false
         }
         draftDirty = false
@@ -2068,7 +2068,7 @@ export function mountLayoutPresetsPanel(container, options = {}) {
         ? Number(res.group_id)
         : (res.preset?.group_id != null ? Number(res.preset.group_id) : null)
       if (savedGroupId == null || Number(savedGroupId) !== Number(groupId)) {
-        throw new Error('所属组未写入数据库。请 Ctrl+C 后执行 npm run dev:local 重启后端')
+        throw new Error('所属组保存失败，请刷新页面后重试')
       }
       currentPresetGroupId = savedGroupId
       patchPresetCache(currentId, { group_id: savedGroupId })
@@ -2374,13 +2374,13 @@ export function mountLayoutPresetsPanel(container, options = {}) {
   async function ensureApiReady() {
     const meta = await api.meta()
     if (!meta.features?.includes('layout_preset_template_refs')) {
-      throw new Error('后端 API 过旧，布局预设无法保存 SVG/表格模板选择。请 Ctrl+C 后重新运行 npm run dev:local')
+      throw new Error('模板关联保存功能不可用，请刷新页面后重试')
     }
     if (!meta.features?.includes('layout_preset_page_nav_column')) {
-      throw new Error('后端 API 过旧，页码栏显示列无法保存。请 Ctrl+C 后重新运行 npm run dev:local')
+      throw new Error('页码栏设置保存功能不可用，请刷新页面后重试')
     }
     if (!meta.features?.includes('layout_preset_group')) {
-      throw new Error('后端 API 过旧，布局模板所属组无法保存。请 Ctrl+C 后执行 npm run dev:local')
+      throw new Error('所属组保存功能不可用，请刷新页面后重试')
     }
     return meta
   }
@@ -2405,7 +2405,7 @@ export function mountLayoutPresetsPanel(container, options = {}) {
       })
       if (!verifyPageNavColumnSaved(res.preset, col)) {
         const msg = res.preset?.page_nav_column === undefined
-          ? '页码栏显示列未写入数据库。请 Ctrl+C 后重新运行 npm run dev:local'
+          ? '页码栏显示列未保存，请刷新页面后重试'
           : '页码栏显示列保存失败，请重试'
         if (!quiet) setStatus(msg, true)
         return false
@@ -2440,7 +2440,7 @@ export function mountLayoutPresetsPanel(container, options = {}) {
       })
       if (res.preset && !verifyPresetTemplateRefsSaved(res.preset)) {
         if (!quiet) {
-          setStatus('模板选择未写入数据库。请停止 dev 后重新运行 npm run dev:local', true)
+          setStatus('模板选择未保存，请刷新页面后重试', true)
         }
         return false
       }
@@ -4168,7 +4168,7 @@ export function mountLayoutPresetsPanel(container, options = {}) {
     },
     onImport: async () => {
       try {
-        const mode = askImportConflictMode()
+        const mode = await askImportConflictMode()
         const bundle = await readJsonFile()
         const result = await api.importLayoutPresets(bundle, mode)
         alertImportDetails(result)
