@@ -1410,7 +1410,7 @@ app.post('/api/settings/fonts', requireAuth, requireModuleFonts, handleSaveFontS
 app.get('/api/meta', (c) => c.json({
   ok: true,
   version: 2,
-  features: ['svg_templates', 'svg_template_files', 'public_template_files', 'table_templates', 'table_templates_empty', 'table_template_sample_rows', 'layout_presets', 'layout_preset_template_refs', 'layout_preset_page_nav_column', 'layout_preset_group', 'site_settings_by_group', 'certificates', 'certificate_row_presets', 'certificate_public_adornments', 'font_settings', 'site_settings', 'admin_login_path', 'public_login_path', 'data_transfer', 'media_upload', 'access_groups', 'visitor_auth', 'admin_modules', 'dashboard', 'account_profile', 'maintenance', 'maintenance_settings_backup', 'auto_backup', 'auto_backup_targets', 'backup_uploads_zip', 'restore_uploads_zip', 'cleanup_avatar_refs', 'backup_progress'],
+  features: ['svg_templates', 'svg_template_files', 'public_template_files', 'table_templates', 'table_templates_empty', 'table_template_sample_rows', 'layout_presets', 'layout_preset_template_refs', 'layout_preset_page_nav_column', 'layout_preset_group', 'site_settings_by_group', 'certificates', 'certificate_row_presets', 'certificate_public_adornments', 'font_settings', 'site_settings', 'admin_login_path', 'public_login_path', 'data_transfer', 'media_upload', 'access_groups', 'visitor_auth', 'admin_modules', 'dashboard', 'account_profile', 'maintenance', 'maintenance_settings_backup', 'auto_backup', 'auto_backup_targets', 'backup_uploads_zip', 'restore_uploads_zip', 'cleanup_avatar_refs', 'backup_progress', 'backup_bundle', 'restore_bundle'],
   template_count: templateCount,
   site: getSiteConfig(db),
   adminLoginPath: getAdminLoginSlug(db),

@@ -28,8 +28,18 @@ import {
   exportAccessPermissions,
   importAccessPermissions,
 } from './settingsBackup.js'
+import {
+  BUNDLE_BACKUP_NAME_RE,
+  createBundleBackup,
+  inspectBundleZip,
+  restoreBundleFromZip,
+} from './bundleBackup.js'
 
 const BACKUP_NAME_RE = /^cat-backup(-uploads|-full)?-\d{4}-\d{2}-\d{2}_\d{6}\.(db|zip)$/
+
+function isAllowedBackupDownload(filename) {
+  return BACKUP_NAME_RE.test(filename) || BUNDLE_BACKUP_NAME_RE.test(filename)
+}
 
 /**
  * @param {import('hono').Hono} app
@@ -96,7 +106,7 @@ export function registerMaintenanceRoutes(app, { db, projectRoot, requireAuth, r
 
   app.get('/api/maintenance/backup-database/:filename', requireAuth, requireMaintenance, (c) => {
     const filename = path.basename(c.req.param('filename') || '')
-    if (!BACKUP_NAME_RE.test(filename)) {
+    if (!isAllowedBackupDownload(filename)) {
       return c.json({ error: '无效的文件名' }, 400)
     }
     const { backupDir } = getDataPaths(projectRoot)
@@ -153,6 +163,94 @@ export function registerMaintenanceRoutes(app, { db, projectRoot, requireAuth, r
       } catch {
         // ignore
       }
+    }
+  })
+
+  app.post('/api/maintenance/backup-bundle', requireAuth, requireMaintenance, async (c) => {
+    const body = await c.req.json().catch(() => ({}))
+    try {
+      const { backupDir } = getDataPaths(projectRoot)
+      fs.mkdirSync(backupDir, { recursive: true })
+      const result = await createBundleBackup(db, projectRoot, backupDir, body.backup_targets ?? body.targets, {})
+      return c.json({
+        ok: true,
+        filename: result.filename,
+        size_bytes: result.size_bytes,
+        size_label: result.size_label,
+        items: result.items,
+        targets: result.targets,
+        download_url: result.download_url,
+      })
+    } catch (err) {
+      return c.json({ error: err.message || '一键备份失败' }, 500)
+    }
+  })
+
+  app.post('/api/maintenance/inspect-bundle', requireAuth, requireMaintenance, async (c) => {
+    const body = await c.req.parseBody()
+    const file = body.file ?? body.bundle
+    if (!file || typeof file === 'string') {
+      return c.json({ error: '请使用 multipart 字段 file 上传备份 ZIP' }, 400)
+    }
+    const name = file.name || 'backup.zip'
+    if (!/\.zip$/i.test(name)) {
+      return c.json({ error: '仅支持 .zip 文件' }, 400)
+    }
+    const buf = Buffer.from(await file.arrayBuffer())
+    if (buf.length < 32) {
+      return c.json({ error: 'ZIP 文件过小' }, 400)
+    }
+    try {
+      const info = await inspectBundleZip(buf)
+      return c.json(info)
+    } catch (err) {
+      return c.json({ error: err.message || '无法解析备份包' }, 400)
+    }
+  })
+
+  app.post('/api/maintenance/restore-bundle', requireAuth, requireMaintenance, async (c) => {
+    const body = await c.req.parseBody()
+    const file = body.file ?? body.bundle
+    if (!file || typeof file === 'string') {
+      return c.json({ error: '请使用 multipart 字段 file 上传备份 ZIP' }, 400)
+    }
+    const name = file.name || 'backup.zip'
+    if (!/\.zip$/i.test(name)) {
+      return c.json({ error: '仅支持 .zip 文件' }, 400)
+    }
+
+    let restoreTargets = body.restore_targets ?? body.targets
+    if (typeof restoreTargets === 'string') {
+      try {
+        restoreTargets = JSON.parse(restoreTargets)
+      } catch {
+        return c.json({ error: 'restore_targets 不是有效 JSON' }, 400)
+      }
+    }
+
+    const buf = Buffer.from(await file.arrayBuffer())
+    if (buf.length < 32) {
+      return c.json({ error: 'ZIP 文件过小' }, 400)
+    }
+
+    try {
+      const principal = c.get('principal')
+      const result = await restoreBundleFromZip(db, projectRoot, buf, restoreTargets, {
+        onConflict: body.on_conflict ?? body.onConflict ?? 'update',
+        reopenDatabase: typeof reconnectDatabase === 'function' ? reconnectDatabase : undefined,
+        principal,
+      })
+      return c.json({
+        ok: true,
+        message: '一键恢复完成。若含数据库项，建议刷新页面；仍异常时请重启后端服务。',
+        restored: result.restored,
+        missing: result.missing,
+        warnings: result.warnings,
+        results: result.results,
+        reloaded: result.reloaded,
+      })
+    } catch (err) {
+      return c.json({ error: err.message || '一键恢复失败' }, 500)
     }
   })
 

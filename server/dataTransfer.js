@@ -195,7 +195,7 @@ function uniqueCertificateTitle(db, title) {
   return candidate
 }
 
-function importTableTemplates(db, bundle, { onConflict = 'rename', principal = null } = {}) {
+export function importTableTemplates(db, bundle, { onConflict = 'rename', principal = null } = {}) {
   const items = validateBundle(bundle, 'table_templates')
   const mode = normalizeOnConflict(onConflict)
   const ts = nowIso()
@@ -249,7 +249,7 @@ function importTableTemplates(db, bundle, { onConflict = 'rename', principal = n
   return result
 }
 
-function importLayoutPresets(db, bundle, { onConflict = 'rename', principal = null } = {}) {
+export function importLayoutPresets(db, bundle, { onConflict = 'rename', principal = null } = {}) {
   const items = validateBundle(bundle, 'layout_presets')
   const mode = normalizeOnConflict(onConflict)
   const ts = nowIso()

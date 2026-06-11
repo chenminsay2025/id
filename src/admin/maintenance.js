@@ -114,7 +114,20 @@ export function mountMaintenancePanel(container, options = {}) {
                   </div>
                   <div>
                     <h3 class="maint-card-title">备份与恢复</h3>
-                    <p class="maint-card-desc">数据库、uploads 与模板/设置模块可单独备份恢复；SVG 为 ZIP，其余多为 JSON。</p>
+                    <p class="maint-card-desc">数据库、uploads 与模板/设置模块可单独备份恢复；也可一键打包为 ZIP 下载或上传恢复。</p>
+                  </div>
+                </div>
+                <div class="maint-bundle-oneclick">
+                  <div class="maint-bundle-oneclick__intro">
+                    <strong>一键备份 / 一键恢复</strong>
+                    <span>勾选需要的模块，打包为单个 ZIP；上传 ZIP 后自动识别并恢复对应项。</span>
+                  </div>
+                  <div class="maint-bundle-oneclick__actions">
+                    <button type="button" class="button button-primary button-sm" id="maint-bundle-backup-open" ${canWrite ? '' : 'disabled'}>一键备份</button>
+                    <label class="button button-secondary button-sm maint-bundle-restore-label" ${canWrite ? '' : 'aria-disabled="true"'}>
+                      一键恢复
+                      <input type="file" id="maint-bundle-restore-file" accept=".zip,application/zip" hidden ${canWrite ? '' : 'disabled'} />
+                    </label>
                   </div>
                 </div>
                 <div class="maint-bundle-tiles">
@@ -307,6 +320,36 @@ export function mountMaintenancePanel(container, options = {}) {
         </div>
       </div>
 
+      <dialog id="maint-bundle-backup-dialog" class="maint-bundle-dialog">
+        <div class="maint-bundle-dialog__inner">
+          <header class="maint-bundle-dialog__head">
+            <h3 class="maint-bundle-dialog__title">一键备份</h3>
+            <p class="maint-bundle-dialog__desc">勾选要打包的模块，确认后将生成 ZIP 并自动下载。</p>
+          </header>
+          <div class="maint-bundle-dialog__targets" id="maint-bundle-backup-targets"></div>
+          <footer class="maint-bundle-dialog__actions">
+            <button type="button" class="button button-secondary button-sm" id="maint-bundle-backup-cancel">取消</button>
+            <button type="button" class="button button-primary button-sm" id="maint-bundle-backup-confirm">开始备份并下载</button>
+          </footer>
+        </div>
+      </dialog>
+
+      <dialog id="maint-bundle-restore-dialog" class="maint-bundle-dialog">
+        <div class="maint-bundle-dialog__inner">
+          <header class="maint-bundle-dialog__head">
+            <h3 class="maint-bundle-dialog__title">一键恢复</h3>
+            <p class="maint-bundle-dialog__desc" id="maint-bundle-restore-desc">勾选要从备份包恢复的模块。</p>
+          </header>
+          <div class="maint-bundle-dialog__file" id="maint-bundle-restore-file-meta"></div>
+          <div class="maint-bundle-dialog__targets" id="maint-bundle-restore-targets"></div>
+          <p class="maint-bundle-dialog__warn" id="maint-bundle-restore-warn" hidden>恢复数据库将覆盖当前全部数据，请谨慎操作。</p>
+          <footer class="maint-bundle-dialog__actions">
+            <button type="button" class="button button-secondary button-sm" id="maint-bundle-restore-cancel">取消</button>
+            <button type="button" class="button button-sm maint-restore-dialog__confirm" id="maint-bundle-restore-confirm">确认恢复</button>
+          </footer>
+        </div>
+      </dialog>
+
       <dialog id="maint-restore-confirm-dialog" class="maint-restore-dialog">
         <div class="maint-restore-dialog__inner">
           <header class="maint-restore-dialog__head">
@@ -391,7 +434,25 @@ export function mountMaintenancePanel(container, options = {}) {
   const previewOpen = container.querySelector('#maint-preview-open')
   const previewClose = container.querySelector('#maint-preview-close')
   const previewCloseBtn = container.querySelector('#maint-preview-close-btn')
+  const bundleBackupOpenBtn = container.querySelector('#maint-bundle-backup-open')
+  const bundleRestoreFileInput = container.querySelector('#maint-bundle-restore-file')
+  const bundleBackupDialog = container.querySelector('#maint-bundle-backup-dialog')
+  const bundleBackupTargetsEl = container.querySelector('#maint-bundle-backup-targets')
+  const bundleBackupCancelBtn = container.querySelector('#maint-bundle-backup-cancel')
+  const bundleBackupConfirmBtn = container.querySelector('#maint-bundle-backup-confirm')
+  const bundleRestoreDialog = container.querySelector('#maint-bundle-restore-dialog')
+  const bundleRestoreDescEl = container.querySelector('#maint-bundle-restore-desc')
+  const bundleRestoreFileMetaEl = container.querySelector('#maint-bundle-restore-file-meta')
+  const bundleRestoreTargetsEl = container.querySelector('#maint-bundle-restore-targets')
+  const bundleRestoreWarnEl = container.querySelector('#maint-bundle-restore-warn')
+  const bundleRestoreCancelBtn = container.querySelector('#maint-bundle-restore-cancel')
+  const bundleRestoreConfirmBtn = container.querySelector('#maint-bundle-restore-confirm')
   const maintViewPage = container.closest('.wp-view-page')
+
+  /** @type {File | null} */
+  let pendingBundleRestoreFile = null
+  /** @type {object | null} */
+  let pendingBundleInspect = null
 
   /** @type {{ deleted_count?: number, freed_bytes?: number, deleted_files?: string[] } | null} */
   let lastScan = null
@@ -432,6 +493,7 @@ export function mountMaintenancePanel(container, options = {}) {
     prepare: '准备',
     db: '数据库快照',
     uploads: 'uploads 图片',
+    items: '导出各模块',
     manifest: 'manifest.json',
     compress: 'ZIP 压缩',
     write: '写入磁盘',
@@ -440,6 +502,18 @@ export function mountMaintenancePanel(container, options = {}) {
 
   const BACKUP_STAGES_UPLOADS = ['prepare', 'uploads', 'manifest', 'compress', 'write', 'done']
   const BACKUP_STAGES_DATA = ['prepare', 'db', 'write', 'done']
+  const BACKUP_STAGES_BUNDLE = ['prepare', 'items', 'compress', 'write', 'done']
+
+  const BUNDLE_TARGET_LABELS = {
+    database: '数据库',
+    uploads: 'uploads 图片',
+    svg: 'SVG 模板库',
+    table_templates: '表格模板库',
+    layout_presets: '布局模板库',
+    font_settings: '字体源',
+    site_settings: '站点设置',
+    access_permissions: '权限管理',
+  }
 
   const RESTORE_STAGE_LABELS = {
     validate: '验证备份',
@@ -457,7 +531,9 @@ export function mountMaintenancePanel(container, options = {}) {
   let backupCompletedStages = new Set()
 
   function resetBackupProgress(mode, customTitle) {
-    backupActiveStages = mode === 'uploads' ? BACKUP_STAGES_UPLOADS : BACKUP_STAGES_DATA
+    backupActiveStages = mode === 'uploads'
+      ? BACKUP_STAGES_UPLOADS
+      : (mode === 'bundle' ? BACKUP_STAGES_BUNDLE : BACKUP_STAGES_DATA)
     backupCompletedStages = new Set()
     if (backupProgressTitle) {
       backupProgressTitle.textContent = customTitle
@@ -632,6 +708,160 @@ export function mountMaintenancePanel(container, options = {}) {
       fillAutoBackupForm(res.config)
     } catch (err) {
       showToast(autoMsg, err.message, true)
+    }
+  }
+
+  function defaultBundleBackupTargets() {
+    return {
+      database: true,
+      uploads: true,
+      svg: true,
+      table_templates: true,
+      layout_presets: true,
+      font_settings: true,
+      site_settings: true,
+      access_permissions: false,
+    }
+  }
+
+  /**
+   * @param {HTMLElement | null} host
+   * @param {string} prefix
+   * @param {Record<string, boolean>} checkedMap
+   * @param {{ presentOnly?: Record<string, { present?: boolean, size_label?: string }>, disableMissing?: boolean }} [opts]
+   */
+  function renderBundleTargetCheckboxes(host, prefix, checkedMap, opts = {}) {
+    if (!host) return
+    const keys = Object.keys(BUNDLE_TARGET_LABELS)
+    host.innerHTML = keys.map((key) => {
+      const info = opts.presentOnly?.[key]
+      const present = info ? !!info.present : true
+      if (opts.disableMissing && !present) return ''
+      const checked = present && !!checkedMap[key]
+      const sizeNote = info?.size_label ? ` · ${info.size_label}` : ''
+      const missingNote = !present ? '（包内未找到）' : ''
+      return `
+        <label class="maint-bundle-target${!present ? ' is-missing' : ''}">
+          <input type="checkbox" data-bundle-target="${escapeAttr(key)}" data-bundle-prefix="${escapeAttr(prefix)}" ${checked ? 'checked' : ''} ${(!present || !canWrite) ? 'disabled' : ''} />
+          <span>${escapeHtml(BUNDLE_TARGET_LABELS[key] || key)}${escapeHtml(sizeNote)}${escapeHtml(missingNote)}</span>
+        </label>
+      `
+    }).filter(Boolean).join('')
+  }
+
+  /** @param {string} prefix */
+  function readBundleTargetsFromDialog(prefix) {
+    /** @type {Record<string, boolean>} */
+    const out = {}
+    container.querySelectorAll(`[data-bundle-prefix="${prefix}"][data-bundle-target]`).forEach((input) => {
+      if (input instanceof HTMLInputElement && input.dataset.bundleTarget) {
+        out[input.dataset.bundleTarget] = input.checked
+      }
+    })
+    return out
+  }
+
+  function openBundleBackupDialog() {
+    const defaults = readAutoBackupForm().backup_targets || defaultBundleBackupTargets()
+    const merged = { ...defaultBundleBackupTargets(), ...defaults }
+    renderBundleTargetCheckboxes(bundleBackupTargetsEl, 'backup', merged)
+    bundleBackupDialog?.showModal()
+  }
+
+  function closeBundleBackupDialog() {
+    bundleBackupDialog?.close()
+  }
+
+  function closeBundleRestoreDialog() {
+    bundleRestoreDialog?.close()
+    pendingBundleRestoreFile = null
+    pendingBundleInspect = null
+  }
+
+  async function runBundleBackup() {
+    const targets = readBundleTargetsFromDialog('backup')
+    if (!Object.values(targets).some(Boolean)) {
+      showToast(dbStatus, '请至少勾选一项备份内容', true)
+      return
+    }
+    closeBundleBackupDialog()
+    const buttons = [bundleBackupOpenBtn, backupDbBtn, backupUploadsBtn, autoRunBtn].filter(Boolean)
+    buttons.forEach((btn) => { btn.disabled = true })
+    const result = await performBackupFlow({
+      mode: 'bundle',
+      title: '正在创建一键备份 ZIP',
+      runBackup: (onProgress) => api.createBundleBackupWithProgress(targets, onProgress),
+      toastEl: dbStatus,
+      download: true,
+    })
+    buttons.forEach((btn) => { btn.disabled = !canWrite })
+    return result
+  }
+
+  async function openBundleRestoreDialog(file, inspect) {
+    pendingBundleRestoreFile = file
+    pendingBundleInspect = inspect
+    const checked = {}
+    for (const [key, info] of Object.entries(inspect?.targets || {})) {
+      checked[key] = !!info?.present
+    }
+    if (bundleRestoreDescEl) {
+      const exportedAt = inspect?.exported_at
+        ? `导出时间：${formatBackupTime(inspect.exported_at)} · `
+        : ''
+      bundleRestoreDescEl.textContent = `${exportedAt}共识别 ${inspect?.item_count ?? 0} 项，请勾选要恢复的模块。`
+    }
+    if (bundleRestoreFileMetaEl) {
+      bundleRestoreFileMetaEl.innerHTML = `
+        <span class="maint-restore-dialog__file-icon" aria-hidden="true">📦</span>
+        <span class="maint-restore-dialog__file-meta">
+          <strong class="maint-restore-dialog__file-name">${escapeHtml(file.name)}</strong>
+          <span class="maint-restore-dialog__file-size">${escapeHtml(formatBytes(file.size))}</span>
+        </span>
+      `
+    }
+    renderBundleTargetCheckboxes(bundleRestoreTargetsEl, 'restore', checked, {
+      presentOnly: inspect?.targets,
+      disableMissing: true,
+    })
+    if (bundleRestoreWarnEl) {
+      bundleRestoreWarnEl.hidden = !checked.database
+    }
+    bundleRestoreDialog?.showModal()
+  }
+
+  async function runBundleRestore() {
+    const file = pendingBundleRestoreFile
+    if (!file) return
+    const targets = readBundleTargetsFromDialog('restore')
+    if (!Object.values(targets).some(Boolean)) {
+      showToast(dbStatus, '请至少勾选一项恢复内容', true)
+      return
+    }
+    const hasJsonModules = ['table_templates', 'layout_presets', 'font_settings', 'site_settings', 'access_permissions']
+      .some((k) => targets[k])
+    const onConflict = hasJsonModules ? await askImportConflictMode() : 'update'
+    if (hasJsonModules && !onConflict) return
+
+    closeBundleRestoreDialog()
+    showRestoreProgress(true, '正在一键恢复')
+    updateBackupProgress({ stage: 'validate', pct: 0, detail: `正在上传 ${file.name}…` })
+    try {
+      const result = await api.restoreBundleBackupWithProgress(file, targets, onConflict || 'update', (evt) => {
+        updateBackupProgress(evt)
+      })
+      updateBackupProgress({ stage: 'done', pct: 100, detail: '恢复完成' })
+      const restoredLabels = (result.restored || [])
+        .map((k) => BUNDLE_TARGET_LABELS[k] || k)
+        .join('、')
+      const warnText = (result.warnings || []).length ? ` · 提示：${result.warnings.join('；')}` : ''
+      showToast(dbStatus, `已恢复：${restoredLabels || '—'}${warnText}`)
+      if (result.reloaded) {
+        setTimeout(() => window.location.reload(), 1500)
+      }
+    } catch (err) {
+      showRestoreProgress(false)
+      showToast(dbStatus, err.message, true)
     }
   }
 
@@ -842,6 +1072,11 @@ export function mountMaintenancePanel(container, options = {}) {
         showToast(toastEl, `uploads 备份格式异常：${result.filename || '未知'}`, true)
         return null
       }
+      if (mode === 'bundle' && !gotZip) {
+        showBackupProgress(mode, false)
+        showToast(toastEl, `一键备份格式异常：${result.filename || '未知'}`, true)
+        return null
+      }
       if (mode === 'data' && !gotDb) {
         showBackupProgress(mode, false)
         showToast(toastEl, `备份格式异常：${result.filename || '未知'}`, true)
@@ -901,6 +1136,56 @@ export function mountMaintenancePanel(container, options = {}) {
 
   backupUploadsBtn?.addEventListener('click', () => {
     void runManualBackup('uploads')
+  })
+
+  bundleBackupOpenBtn?.addEventListener('click', () => openBundleBackupDialog())
+  bundleBackupCancelBtn?.addEventListener('click', () => closeBundleBackupDialog())
+  bundleBackupConfirmBtn?.addEventListener('click', () => { void runBundleBackup() })
+  bundleBackupDialog?.addEventListener('cancel', (e) => {
+    e.preventDefault()
+    closeBundleBackupDialog()
+  })
+  bundleBackupDialog?.addEventListener('click', (e) => {
+    if (e.target === bundleBackupDialog) closeBundleBackupDialog()
+  })
+
+  bundleRestoreCancelBtn?.addEventListener('click', () => closeBundleRestoreDialog())
+  bundleRestoreConfirmBtn?.addEventListener('click', () => { void runBundleRestore() })
+  bundleRestoreDialog?.addEventListener('cancel', (e) => {
+    e.preventDefault()
+    closeBundleRestoreDialog()
+  })
+  bundleRestoreDialog?.addEventListener('click', (e) => {
+    if (e.target === bundleRestoreDialog) closeBundleRestoreDialog()
+  })
+
+  bundleRestoreTargetsEl?.addEventListener('change', (e) => {
+    if (!(e.target instanceof HTMLInputElement)) return
+    if (e.target.dataset.bundlePrefix !== 'restore') return
+    if (e.target.dataset.bundleTarget === 'database' && bundleRestoreWarnEl) {
+      bundleRestoreWarnEl.hidden = !e.target.checked
+    }
+  })
+
+  bundleRestoreFileInput?.addEventListener('change', async () => {
+    const file = bundleRestoreFileInput.files?.[0]
+    bundleRestoreFileInput.value = ''
+    if (!file || !/\.zip$/i.test(file.name)) {
+      showToast(dbStatus, '请选择备份 ZIP 文件', true)
+      return
+    }
+    showToast(dbStatus, '正在识别备份包…')
+    try {
+      const inspect = await api.inspectBundleBackup(file)
+      if (!inspect?.item_count) {
+        showToast(dbStatus, '备份包中未识别到可恢复模块', true)
+        return
+      }
+      showToast(dbStatus, '')
+      await openBundleRestoreDialog(file, inspect)
+    } catch (err) {
+      showToast(dbStatus, err.message, true)
+    }
   })
 
   restoreDbInput?.addEventListener('change', async () => {

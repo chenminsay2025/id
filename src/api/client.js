@@ -601,4 +601,38 @@ export const api = {
     method: 'POST',
     body: JSON.stringify({ bundle, on_conflict: onConflict }),
   }),
+
+  createBundleBackup: (backup_targets) => request('/api/maintenance/backup-bundle', {
+    method: 'POST',
+    body: JSON.stringify({ backup_targets }),
+  }),
+  createBundleBackupWithProgress: (backup_targets, onProgress) => runWithBackupProgressPoll(onProgress, () =>
+    request('/api/maintenance/backup-bundle', {
+      method: 'POST',
+      body: JSON.stringify({ backup_targets }),
+    }), 'bundle'),
+  inspectBundleBackup: (file) => {
+    const form = new FormData()
+    form.append('file', file, file.name || 'backup.zip')
+    return uploadRequest('/api/maintenance/inspect-bundle', form)
+  },
+  restoreBundleBackup: (file, restore_targets, onConflict = 'update') => {
+    const form = new FormData()
+    form.append('file', file, file.name || 'backup.zip')
+    form.append('restore_targets', JSON.stringify(restore_targets))
+    form.append('on_conflict', onConflict)
+    return uploadRequest('/api/maintenance/restore-bundle', form)
+  },
+  restoreBundleBackupWithProgress: (file, restore_targets, onConflict, onProgress) => runWithRestoreProgressPoll(onProgress, () => {
+    const form = new FormData()
+    form.append('file', file, file.name || 'backup.zip')
+    form.append('restore_targets', JSON.stringify(restore_targets))
+    form.append('on_conflict', onConflict)
+    onProgress?.({
+      stage: 'validate',
+      pct: 1,
+      detail: `正在上传 ${file.name || 'backup.zip'}…`,
+    })
+    return uploadRequest('/api/maintenance/restore-bundle', form)
+  }),
 }

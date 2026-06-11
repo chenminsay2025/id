@@ -23,7 +23,7 @@ export function getRestoreProgressState() {
 }
 
 /** @param {object} info @param {(info: object) => void} [userOnProgress] */
-function publishBackupProgress(info, userOnProgress) {
+export function publishBackupProgress(info, userOnProgress) {
   backupProgressState = {
     active: info.stage !== 'done' && info.stage !== 'error',
     updated_at: new Date().toISOString(),
@@ -33,7 +33,7 @@ function publishBackupProgress(info, userOnProgress) {
 }
 
 /** @param {object} info @param {(info: object) => void} [userOnProgress] */
-function publishRestoreProgress(info, userOnProgress) {
+export function publishRestoreProgress(info, userOnProgress) {
   restoreProgressState = {
     active: info.stage !== 'done' && info.stage !== 'error',
     updated_at: new Date().toISOString(),

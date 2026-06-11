@@ -13127,6 +13127,125 @@ body.layout-collapsible-reorder-active * {
   gap: 10px;
 }
 
+.maint-bundle-oneclick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--admin-border);
+  border-radius: 10px;
+  background: linear-gradient(180deg, #f8fafc 0%, #fff 100%);
+}
+
+.maint-bundle-oneclick__intro {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 220px;
+}
+
+.maint-bundle-oneclick__intro strong {
+  font-size: 14px;
+  color: #0f172a;
+}
+
+.maint-bundle-oneclick__intro span {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.maint-bundle-oneclick__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.maint-bundle-dialog {
+  border: none;
+  border-radius: 12px;
+  padding: 0;
+  max-width: min(520px, calc(100vw - 24px));
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.18);
+}
+
+.maint-bundle-dialog::backdrop {
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.maint-bundle-dialog__inner {
+  padding: 18px 20px 16px;
+}
+
+.maint-bundle-dialog__title {
+  margin: 0;
+  font-size: 17px;
+}
+
+.maint-bundle-dialog__desc {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.maint-bundle-dialog__file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid var(--admin-border);
+}
+
+.maint-bundle-dialog__targets {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+  margin: 14px 0;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.maint-bundle-target {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.maint-bundle-target.is-missing {
+  opacity: 0.55;
+}
+
+.maint-bundle-target input {
+  margin-top: 2px;
+}
+
+.maint-bundle-dialog__warn {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  color: #9a3412;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.maint-bundle-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .maint-backup-hub .maint-bundle-tiles {
   display: grid;
   grid-template-columns: 1fr 1fr;
