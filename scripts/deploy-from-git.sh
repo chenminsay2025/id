@@ -13,7 +13,7 @@ BRANCH="${GIT_BRANCH:-main}"
 REMOTE="${GIT_REMOTE:-origin}"
 
 echo "[deploy] 目录: $ROOT"
-echo "[deploy] git pull $REMOTE $BRANCH"
+echo "[deploy] 同步 $REMOTE/$BRANCH（与 GitHub 完全一致，丢弃服务器本地提交）"
 
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   echo "错误：当前目录不是 git 仓库。请先在网站根目录 git clone。"
@@ -22,7 +22,8 @@ fi
 
 git fetch "$REMOTE" "$BRANCH"
 git checkout "$BRANCH"
-git pull "$REMOTE" "$BRANCH"
+# 部署机不应在服务器上 git commit；用 hard reset 避免 divergent branches / pull 策略报错
+git reset --hard "$REMOTE/$BRANCH"
 
 if id www >/dev/null 2>&1; then
   chown -R www:www "$ROOT"
