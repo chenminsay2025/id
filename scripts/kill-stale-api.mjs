@@ -18,7 +18,7 @@ const REQUIRED_FEATURES = [
   'auto_backup',
   'dashboard',
   'account_profile',
-  'backup_full_zip',
+  'backup_uploads_zip',
   'cleanup_avatar_refs',
   'backup_progress',
 ]

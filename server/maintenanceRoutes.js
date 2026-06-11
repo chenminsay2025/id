@@ -3,12 +3,14 @@ import path from 'node:path'
 import {
   cleanupUnusedUploads,
   createDatabaseBackup,
+  createUploadsBackup,
   formatBytes,
   getDataPaths,
   getStorageStats,
   getBackupProgressState,
   getRestoreProgressState,
   restoreDatabaseFromFile,
+  restoreUploadsFromZip,
 } from './dataMaintenance.js'
 import {
   formatAutoBackupConfigForClient,
@@ -27,7 +29,7 @@ import {
   importAccessPermissions,
 } from './settingsBackup.js'
 
-const BACKUP_NAME_RE = /^cat-backup(-full)?-\d{4}-\d{2}-\d{2}_\d{6}\.(db|zip)$/
+const BACKUP_NAME_RE = /^cat-backup(-uploads|-full)?-\d{4}-\d{2}-\d{2}_\d{6}\.(db|zip)$/
 
 /**
  * @param {import('hono').Hono} app
@@ -59,9 +61,7 @@ export function registerMaintenanceRoutes(app, { db, projectRoot, requireAuth, r
 
   app.post('/api/maintenance/backup-database', requireAuth, requireMaintenance, async (c) => {
     try {
-      const body = await c.req.json().catch(() => ({}))
-      const mode = body.mode === 'full' ? 'full' : 'data'
-      const result = await createDatabaseBackup(db, projectRoot, undefined, { mode })
+      const result = await createDatabaseBackup(db, projectRoot)
       return c.json({
         ok: true,
         mode: result.mode,
@@ -74,6 +74,23 @@ export function registerMaintenanceRoutes(app, { db, projectRoot, requireAuth, r
       })
     } catch (err) {
       return c.json({ error: err.message || '备份失败' }, 500)
+    }
+  })
+
+  app.post('/api/maintenance/backup-uploads', requireAuth, requireMaintenance, async (c) => {
+    try {
+      const result = await createUploadsBackup(projectRoot)
+      return c.json({
+        ok: true,
+        mode: result.mode,
+        filename: result.filename,
+        size_bytes: result.size_bytes,
+        size_label: formatBytes(result.size_bytes),
+        includes: result.includes,
+        download_url: `/api/maintenance/backup-database/${encodeURIComponent(result.filename)}`,
+      })
+    } catch (err) {
+      return c.json({ error: err.message || 'uploads 备份失败' }, 500)
     }
   })
 
@@ -96,6 +113,47 @@ export function registerMaintenanceRoutes(app, { db, projectRoot, requireAuth, r
         'Content-Length': String(buf.length),
       },
     })
+  })
+
+  app.post('/api/maintenance/restore-uploads', requireAuth, requireMaintenance, async (c) => {
+    const body = await c.req.parseBody()
+    const file = body.file ?? body.uploads
+    if (!file || typeof file === 'string') {
+      return c.json({ error: '请使用 multipart 字段 file 上传 uploads ZIP 备份' }, 400)
+    }
+
+    const name = file.name || 'uploads.zip'
+    if (!/\.zip$/i.test(name)) {
+      return c.json({ error: '仅支持 .zip 文件' }, 400)
+    }
+
+    const buf = Buffer.from(await file.arrayBuffer())
+    if (buf.length < 32) {
+      return c.json({ error: 'ZIP 文件过小' }, 400)
+    }
+
+    const { backupDir } = getDataPaths(projectRoot)
+    fs.mkdirSync(backupDir, { recursive: true })
+    const tempPath = path.join(backupDir, `_restore-uploads-${Date.now()}.zip`)
+
+    try {
+      fs.writeFileSync(tempPath, buf)
+      const result = await restoreUploadsFromZip(projectRoot, tempPath)
+      return c.json({
+        ok: true,
+        message: 'uploads 已恢复。若界面图片未更新，请刷新页面。',
+        safety_backup: result.safety_backup,
+        restored_count: result.restored_count,
+      })
+    } catch (err) {
+      return c.json({ error: err.message || 'uploads 恢复失败' }, 500)
+    } finally {
+      try {
+        if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath)
+      } catch {
+        // ignore
+      }
+    }
   })
 
   app.post('/api/maintenance/restore-database', requireAuth, requireMaintenance, async (c) => {
@@ -153,9 +211,9 @@ export function registerMaintenanceRoutes(app, { db, projectRoot, requireAuth, r
       const config = saveAutoBackupConfig(db, {
         enabled: body.enabled,
         interval_hours: body.interval_hours,
-        backup_mode: body.backup_mode,
         backup_dir: body.backup_dir,
         keep_count: body.keep_count,
+        backup_targets: body.backup_targets,
       })
       restartAutoBackupScheduler(db, projectRoot)
       return c.json({ ok: true, config: formatAutoBackupConfigForClient(db, projectRoot) })
@@ -215,26 +273,30 @@ export function registerMaintenanceRoutes(app, { db, projectRoot, requireAuth, r
       const base = loadAutoBackupConfig(db)
       const cfg = {
         ...base,
-        backup_mode: body.backup_mode === 'full' || body.backup_mode === 'data'
-          ? body.backup_mode
-          : base.backup_mode,
         backup_dir: body.backup_dir != null && String(body.backup_dir).trim()
           ? String(body.backup_dir).trim()
           : base.backup_dir,
+        backup_targets: body.backup_targets != null ? body.backup_targets : base.backup_targets,
       }
-      const result = await runAutoBackup(db, projectRoot, cfg)
+      const result = await runAutoBackup(db, projectRoot, cfg, { force: !!body.force })
       restartAutoBackupScheduler(db, projectRoot)
+      const fileList = (result.files || []).map((f) => ({
+        filename: f.filename,
+        size_bytes: f.size_bytes,
+        size_label: formatBytes(f.size_bytes || 0),
+        mode: f.mode,
+      }))
       return c.json({
         ok: true,
         skipped: !!result.skipped,
         reason: result.reason,
-        mode: result.mode,
         filename: result.filename,
+        files: fileList,
         size_bytes: result.size_bytes,
-        size_label: formatBytes(result.size_bytes),
+        size_label: formatBytes(result.size_bytes || 0),
         counts: result.counts,
-        includes: result.includes,
         removed_old: result.removed_old,
+        targets: result.targets,
         config: formatAutoBackupConfigForClient(db, projectRoot),
       })
     } catch (err) {

@@ -84,7 +84,9 @@ export default defineConfig({
               || !data.features?.includes('certificate_public_adornments')
               || !data.features?.includes('auto_backup')
               || !data.features?.includes('account_profile')
-              || !data.features?.includes('backup_full_zip')
+              || !data.features?.includes('backup_uploads_zip')
+              || !data.features?.includes('auto_backup_targets')
+              || !data.features?.includes('restore_uploads_zip')
               || !data.features?.includes('cleanup_avatar_refs')
               || !data.features?.includes('backup_progress')
             ) {

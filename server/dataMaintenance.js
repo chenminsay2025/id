@@ -3,11 +3,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import Database from 'better-sqlite3'
 import JSZip from 'jszip'
-import { readSvgTemplateFile, getSvgTemplatesDir } from './svgTemplateFiles.js'
-import { appendSvgTemplateFilesToZip } from './svgTemplateBackup.js'
-import { exportTableTemplates, exportLayoutPresets } from './dataTransfer.js'
-
-const TEMPLATE_LIBS_PREFIX = 'template-libraries/'
+import { readSvgTemplateFile } from './svgTemplateFiles.js'
 
 const UPLOAD_REF_RE = /\/uploads\/([a-zA-Z0-9._-]+)/gi
 const CAT_IMG_RE = /cat-img:([^\s"'<>]+)/gi
@@ -154,7 +150,7 @@ function buildSiteSettingsSnapshotForSignature(db) {
 }
 
 /** @param {import('better-sqlite3').Database} db */
-function buildDbSnapshotForBackupSignature(db) {
+export function buildDbSnapshotForBackupSignature(db) {
   const counts = {}
   for (const table of BACKUP_SIGNATURE_DB_TABLES) {
     try {
@@ -205,22 +201,14 @@ export function summarizeDirectoryForBackup(diskDir) {
 }
 
 /**
- * 计算自动备份数据指纹，用于判断自上次备份以来是否有变化。
+ * 计算自动备份数据指纹，用于判断自上次备份以来是否有变化（仅数据库）。
  * @param {import('better-sqlite3').Database} db
- * @param {string} projectRoot
- * @param {'data' | 'full'} mode
  */
-export function computeAutoBackupSignature(db, projectRoot, mode) {
-  /** @type {Record<string, unknown>} */
+export function computeAutoBackupSignature(db) {
   const payload = {
-    v: 2,
-    mode,
+    v: 3,
+    mode: 'data',
     db: buildDbSnapshotForBackupSignature(db),
-  }
-  if (mode === 'full') {
-    const { uploadsDir } = getDataPaths(projectRoot)
-    payload.uploads = summarizeDirectoryForBackup(uploadsDir)
-    payload.svg_templates = summarizeDirectoryForBackup(getSvgTemplatesDir(projectRoot))
   }
   return crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex')
 }
@@ -423,13 +411,11 @@ export function getStorageStats(db, projectRoot) {
  * @param {import('better-sqlite3').Database} db
  * @param {string} projectRoot
  * @param {string} [destDir] absolute or relative backup directory
- * @param {{ mode?: 'data' | 'full', filename?: string, onProgress?: (info: object) => void }} [opts]
+ * @param {{ filename?: string, onProgress?: (info: object) => void }} [opts]
  */
 export async function createDatabaseBackup(db, projectRoot, destDir, opts = {}) {
-  const mode = opts.mode === 'full' ? 'full' : 'data'
-  const report = (info) => publishBackupProgress({ mode, ...info }, opts.onProgress)
+  const report = (info) => publishBackupProgress({ mode: 'data', ...info }, opts.onProgress)
   try {
-    if (mode === 'full') return await createFullBackupArchive(db, projectRoot, destDir, { ...opts, onProgress: report })
     const dir = destDir
       ? (path.isAbsolute(destDir) ? destDir : path.join(projectRoot, destDir))
       : getDataPaths(projectRoot).backupDir
@@ -510,56 +496,38 @@ function addDirectoryToZip(zip, folderName, diskDir, onFile) {
 }
 
 /**
- * @param {import('better-sqlite3').Database} db
  * @param {string} projectRoot
  * @param {string} [destDir]
  * @param {{ filename?: string, onProgress?: (info: object) => void }} [opts]
  */
-async function createFullBackupArchive(db, projectRoot, destDir, opts = {}) {
-  const report = (info) => {
-    if (typeof opts.onProgress === 'function') opts.onProgress(info)
-    else publishBackupProgress({ mode: 'full', ...info })
-  }
+export async function createUploadsBackup(projectRoot, destDir, opts = {}) {
+  const report = (info) => publishBackupProgress({ mode: 'uploads', ...info }, opts.onProgress)
   const dir = destDir
     ? (path.isAbsolute(destDir) ? destDir : path.join(projectRoot, destDir))
     : getDataPaths(projectRoot).backupDir
   fs.mkdirSync(dir, { recursive: true })
-  const filename = opts.filename || `cat-backup-full-${maintenanceTimestamp()}.zip`
+  const filename = opts.filename || `cat-backup-uploads-${maintenanceTimestamp()}.zip`
   const dest = path.join(dir, filename)
-  const tempDbPath = path.join(dir, `_tmp-full-${Date.now()}.db`)
   const { uploadsDir } = getDataPaths(projectRoot)
   const uploadFileTotal = listDirectoryFiles(uploadsDir).length
-  let svgTemplateTotal = 0
-  try {
-    svgTemplateTotal = db.prepare('SELECT COUNT(*) AS n FROM svg_templates').get().n
-  } catch {
-    svgTemplateTotal = 0
-  }
 
   report({
     stage: 'prepare',
     pct: 0,
-    detail: '准备全量备份…',
+    detail: '准备 uploads 备份…',
     upload_total: uploadFileTotal,
-    svg_total: svgTemplateTotal,
   })
-  report({ stage: 'db', pct: 4, detail: '正在快照 SQLite 数据库（合并 WAL）…' })
-  await db.backup(tempDbPath)
-  const dbStat = fs.statSync(tempDbPath)
-  report({ stage: 'db', pct: 16, detail: `数据库快照完成（${formatBytes(dbStat.size)}）` })
 
   const zip = new JSZip()
-  zip.file('cat.db', fs.readFileSync(tempDbPath))
-
   if (uploadFileTotal > 0) {
-    report({ stage: 'uploads', pct: 18, detail: `正在打包 uploads/（共 ${uploadFileTotal} 个文件）…` })
+    report({ stage: 'uploads', pct: 8, detail: `正在打包 uploads/（共 ${uploadFileTotal} 个文件）…` })
   } else {
-    report({ stage: 'uploads', pct: 50, detail: 'uploads/ 为空，跳过' })
+    report({ stage: 'uploads', pct: 50, detail: 'uploads/ 为空' })
   }
   const uploadCount = addDirectoryToZip(zip, 'uploads', uploadsDir, (p) => {
     if (uploadFileTotal <= 0) return
     if (p.current !== p.total && p.current % 4 !== 0) return
-    const pct = 18 + Math.round((p.current / p.total) * 32)
+    const pct = 8 + Math.round((p.current / p.total) * 52)
     report({
       stage: 'uploads',
       pct,
@@ -570,59 +538,24 @@ async function createFullBackupArchive(db, projectRoot, destDir, opts = {}) {
     })
   })
 
-  if (svgTemplateTotal > 0) {
-    report({ stage: 'svg', pct: 52, detail: `正在打包 SVG 模板库（共 ${svgTemplateTotal} 项）…` })
-  } else {
-    report({ stage: 'svg', pct: 58, detail: 'SVG 模板库为空，跳过' })
-  }
-  const svgExport = appendSvgTemplateFilesToZip(zip, db, projectRoot, {
-    zipPrefix: 'svg-templates/',
-    onFile: (p) => {
-      if (svgTemplateTotal <= 0) return
-      const pct = 52 + Math.round((p.current / Math.max(p.total, 1)) * 8)
-      report({
-        stage: 'svg',
-        pct,
-        detail: `打包 SVG 模板（${p.current}/${p.total}）`,
-        file: p.file,
-        current: p.current,
-        total: p.total,
-      })
-    },
-  })
-  const svgCount = svgExport.count
-
-  report({ stage: 'template-libs', pct: 62, detail: '正在导出表格与布局模板库（JSON）…' })
-  const tableBundle = exportTableTemplates(db)
-  const layoutBundle = exportLayoutPresets(db)
-  zip.file(`${TEMPLATE_LIBS_PREFIX}table-templates.json`, JSON.stringify(tableBundle, null, 2))
-  zip.file(`${TEMPLATE_LIBS_PREFIX}layout-presets.json`, JSON.stringify(layoutBundle, null, 2))
-
-  const counts = countDbRecords(db)
-  report({ stage: 'manifest', pct: 68, detail: '写入 manifest.json…' })
+  report({ stage: 'manifest', pct: 64, detail: '写入 manifest.json…' })
   zip.file('manifest.json', JSON.stringify({
     v: 1,
-    mode: 'full',
+    mode: 'uploads',
     created_at: new Date().toISOString(),
-    counts,
     includes: {
-      database: true,
       uploads: uploadCount,
-      svg_templates: svgCount,
-      svg_templates_skipped: svgExport.skipped.length,
-      table_templates: tableBundle.item_count,
-      layout_presets: layoutBundle.item_count,
-      template_libraries: `${TEMPLATE_LIBS_PREFIX}*.json`,
     },
+    restore_hint: '解压后将 uploads/ 目录合并到 data/uploads/',
   }, null, 2))
 
-  report({ stage: 'compress', pct: 70, detail: '正在压缩 ZIP（DEFLATE）…' })
+  report({ stage: 'compress', pct: 68, detail: '正在压缩 ZIP（DEFLATE）…' })
   const buf = await zip.generateAsync({
     type: 'nodebuffer',
     compression: 'DEFLATE',
     compressionOptions: { level: 6 },
   }, (metadata) => {
-    const pct = 70 + Math.round((metadata.percent || 0) * 0.24)
+    const pct = 68 + Math.round((metadata.percent || 0) * 0.26)
     const rounded = Math.round(metadata.percent || 0)
     if (rounded > 0 && rounded < 100 && rounded % 4 !== 0) return
     report({
@@ -635,32 +568,20 @@ async function createFullBackupArchive(db, projectRoot, destDir, opts = {}) {
 
   report({ stage: 'write', pct: 96, detail: `正在写入 ${filename}…` })
   fs.writeFileSync(dest, buf)
-  try {
-    fs.unlinkSync(tempDbPath)
-  } catch {
-    // ignore
-  }
   const stat = fs.statSync(dest)
   report({
     stage: 'done',
     pct: 100,
-    detail: `全量备份完成（${formatBytes(stat.size)} · 图片 ${uploadCount} · SVG ${svgCount} · 表格 ${tableBundle.item_count} · 布局 ${layoutBundle.item_count}）`,
+    detail: `uploads 备份完成（${formatBytes(stat.size)} · ${uploadCount} 个文件）`,
     upload_count: uploadCount,
-    svg_count: svgCount,
-    table_templates: tableBundle.item_count,
-    layout_presets: layoutBundle.item_count,
   })
   return {
-    mode: 'full',
+    mode: 'uploads',
     filename,
     path: dest,
     size_bytes: stat.size,
-    counts,
     includes: {
       uploads: uploadCount,
-      svg_templates: svgCount,
-      table_templates: tableBundle.item_count,
-      layout_presets: layoutBundle.item_count,
     },
   }
 }
@@ -790,6 +711,67 @@ export async function restoreDatabaseFromFile(liveDb, projectRoot, sourcePath, o
     }
     report({ stage: 'error', pct: 0, detail: err.message || '恢复失败' })
     throw err
+  }
+}
+
+/**
+ * @param {string} projectRoot
+ * @param {string} zipPath
+ * @param {{ onProgress?: (info: object) => void }} [opts]
+ */
+export async function restoreUploadsFromZip(projectRoot, zipPath, opts = {}) {
+  const report = (info) => publishRestoreProgress(info, opts.onProgress)
+  const { uploadsDir, backupDir } = getDataPaths(projectRoot)
+  fs.mkdirSync(uploadsDir, { recursive: true })
+  fs.mkdirSync(backupDir, { recursive: true })
+
+  report({ stage: 'validate', pct: 4, detail: '正在读取 ZIP…' })
+  const buf = fs.readFileSync(zipPath)
+  if (buf.length < 32) {
+    throw new Error('ZIP 文件过小')
+  }
+  const zip = await JSZip.loadAsync(buf)
+  const toExtract = Object.entries(zip.files)
+    .filter(([, entry]) => !entry.dir)
+    .map(([rel, entry]) => {
+      const norm = rel.replace(/\\/g, '/')
+      if (!norm.startsWith('uploads/') || norm === 'uploads/') return null
+      const inner = norm.slice('uploads/'.length)
+      if (!inner || inner.endsWith('/')) return null
+      return { inner, entry }
+    })
+    .filter(Boolean)
+
+  if (toExtract.length === 0) {
+    throw new Error('ZIP 中未找到 uploads/ 目录下的文件')
+  }
+
+  const safetyName = `cat-uploads.before-restore-${maintenanceTimestamp()}.zip`
+  report({ stage: 'safety', pct: 12, detail: '正在创建恢复前安全备份…' })
+  await createUploadsBackup(projectRoot, backupDir, { filename: safetyName })
+
+  let restoredCount = 0
+  for (const item of toExtract) {
+    const dest = path.join(uploadsDir, item.inner)
+    fs.mkdirSync(path.dirname(dest), { recursive: true })
+    const data = await item.entry.async('nodebuffer')
+    fs.writeFileSync(dest, data)
+    restoredCount += 1
+    if (restoredCount % 8 === 0 || restoredCount === toExtract.length) {
+      report({
+        stage: 'restore',
+        pct: 18 + Math.round((restoredCount / toExtract.length) * 72),
+        detail: `正在恢复 uploads/（${restoredCount}/${toExtract.length}）…`,
+        current: restoredCount,
+        total: toExtract.length,
+      })
+    }
+  }
+
+  report({ stage: 'done', pct: 100, detail: 'uploads 恢复完成' })
+  return {
+    safety_backup: safetyName,
+    restored_count: restoredCount,
   }
 }
 

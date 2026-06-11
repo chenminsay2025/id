@@ -107,44 +107,103 @@ export function mountMaintenancePanel(container, options = {}) {
         <div class="maint-panels">
           <div class="maint-panel is-active" data-panel="backup" role="tabpanel">
             <div class="maint-grid-2">
-              <section class="maint-action-card">
+              <section class="maint-action-card maint-backup-hub">
                 <div class="maint-action-card-head">
                   <div class="maint-action-card-icon maint-action-card-icon--backup" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg>
                   </div>
                   <div>
                     <h3 class="maint-card-title">备份与恢复</h3>
-                    <p class="maint-card-desc">可选仅数据库快照，或全量包（含上传图片与三类模板库）。恢复仍使用 .db 文件。</p>
+                    <p class="maint-card-desc">数据库、uploads 与模板/设置模块可单独备份恢复；SVG 为 ZIP，其余多为 JSON。</p>
                   </div>
                 </div>
-                <div class="maint-backup-mode" role="radiogroup" aria-label="备份类型">
-                  <label class="maint-backup-mode-option">
-                    <input type="radio" name="maint-backup-mode" value="data" checked ${canWrite ? '' : 'disabled'} />
-                    <span class="maint-backup-mode-body">
-                      <strong>仅数据</strong>
-                      <span>SQLite 快照（.db），体积小，可直接恢复</span>
-                    </span>
-                  </label>
-                  <label class="maint-backup-mode-option">
-                    <input type="radio" name="maint-backup-mode" value="full" ${canWrite ? '' : 'disabled'} />
-                    <span class="maint-backup-mode-body">
-                      <strong>全量</strong>
-                      <span>ZIP：数据库 + uploads + 模板库（SVG 文件、表格/布局 JSON）</span>
-                    </span>
-                  </label>
-                </div>
-                <div class="maint-action-tiles">
-                  <button type="button" class="maint-action-tile maint-action-tile--primary" id="maint-backup" ${canWrite ? '' : 'disabled'}>
-                    <span class="maint-action-tile-icon" aria-hidden="true">↓</span>
-                    <span class="maint-action-tile-title">创建备份</span>
-                    <span class="maint-action-tile-desc" id="maint-backup-desc">生成并下载 .db 文件</span>
-                  </button>
-                  <label class="maint-action-tile maint-action-tile--secondary maintenance-file-btn" ${canWrite ? '' : 'aria-disabled="true"'}>
-                    <span class="maint-action-tile-icon" aria-hidden="true">↑</span>
-                    <span class="maint-action-tile-title">恢复数据库</span>
-                    <span class="maint-action-tile-desc">选择 .db 备份文件</span>
-                    <input type="file" id="maint-restore-file" accept=".db,application/octet-stream" hidden ${canWrite ? '' : 'disabled'} />
-                  </label>
+                <div class="maint-bundle-tiles">
+                  <div class="maint-bundle-tile maint-bundle-tile--primary">
+                    <div class="maint-bundle-tile__head">
+                      <span class="maint-bundle-tile__title">数据库</span>
+                      <span class="maint-bundle-tile__desc">SQLite 快照（.db），可直接恢复</span>
+                    </div>
+                    <div class="maint-bundle-tile__actions">
+                      <button type="button" class="maint-bundle-btn maint-bundle-btn--backup" id="maint-backup-db" ${canWrite ? '' : 'disabled'}>备份</button>
+                      <label class="maint-bundle-btn maint-bundle-btn--restore maint-bundle-restore-label" ${canWrite ? '' : 'aria-disabled="true"'}>
+                        恢复
+                        <input type="file" id="maint-restore-db-file" accept=".db,application/octet-stream" hidden ${canWrite ? '' : 'disabled'} />
+                      </label>
+                    </div>
+                  </div>
+                  <div class="maint-bundle-tile">
+                    <div class="maint-bundle-tile__head">
+                      <span class="maint-bundle-tile__title">uploads 图片</span>
+                      <span class="maint-bundle-tile__desc">上传目录 ZIP（解压合并到 data/uploads/）</span>
+                    </div>
+                    <div class="maint-bundle-tile__actions">
+                      <button type="button" class="maint-bundle-btn maint-bundle-btn--backup" id="maint-backup-uploads" ${canWrite ? '' : 'disabled'}>备份</button>
+                      <label class="maint-bundle-btn maint-bundle-btn--restore maint-bundle-restore-label" ${canWrite ? '' : 'aria-disabled="true"'}>
+                        恢复
+                        <input type="file" id="maint-restore-uploads-file" accept=".zip,application/zip" hidden ${canWrite ? '' : 'disabled'} />
+                      </label>
+                    </div>
+                  </div>
+                  <div class="maint-bundle-tile">
+                    <div class="maint-bundle-tile__head">
+                      <span class="maint-bundle-tile__title">SVG 模板库</span>
+                      <span class="maint-bundle-tile__desc">.svg 文件 ZIP 包</span>
+                    </div>
+                    <div class="maint-bundle-tile__actions">
+                      <button type="button" class="maint-bundle-btn maint-bundle-btn--backup" id="maint-export-svg" ${canWrite ? '' : 'disabled'}>备份</button>
+                      <button type="button" class="maint-bundle-btn maint-bundle-btn--restore" id="maint-import-svg" ${canWrite ? '' : 'disabled'}>恢复</button>
+                    </div>
+                  </div>
+                  <div class="maint-bundle-tile">
+                    <div class="maint-bundle-tile__head">
+                      <span class="maint-bundle-tile__title">表格模板库</span>
+                      <span class="maint-bundle-tile__desc">JSON 配置导出</span>
+                    </div>
+                    <div class="maint-bundle-tile__actions">
+                      <button type="button" class="maint-bundle-btn maint-bundle-btn--backup" id="maint-export-table" ${canWrite ? '' : 'disabled'}>备份</button>
+                      <button type="button" class="maint-bundle-btn maint-bundle-btn--restore" id="maint-import-table" ${canWrite ? '' : 'disabled'}>恢复</button>
+                    </div>
+                  </div>
+                  <div class="maint-bundle-tile">
+                    <div class="maint-bundle-tile__head">
+                      <span class="maint-bundle-tile__title">布局模板库</span>
+                      <span class="maint-bundle-tile__desc">JSON 配置导出</span>
+                    </div>
+                    <div class="maint-bundle-tile__actions">
+                      <button type="button" class="maint-bundle-btn maint-bundle-btn--backup" id="maint-export-layout" ${canWrite ? '' : 'disabled'}>备份</button>
+                      <button type="button" class="maint-bundle-btn maint-bundle-btn--restore" id="maint-import-layout" ${canWrite ? '' : 'disabled'}>恢复</button>
+                    </div>
+                  </div>
+                  <div class="maint-bundle-tile">
+                    <div class="maint-bundle-tile__head">
+                      <span class="maint-bundle-tile__title">字体源</span>
+                      <span class="maint-bundle-tile__desc">字体列表与地址</span>
+                    </div>
+                    <div class="maint-bundle-tile__actions">
+                      <button type="button" class="maint-bundle-btn maint-bundle-btn--backup" id="maint-export-fonts" ${canWrite ? '' : 'disabled'}>备份</button>
+                      <button type="button" class="maint-bundle-btn maint-bundle-btn--restore" id="maint-import-fonts" ${canWrite ? '' : 'disabled'}>恢复</button>
+                    </div>
+                  </div>
+                  <div class="maint-bundle-tile">
+                    <div class="maint-bundle-tile__head">
+                      <span class="maint-bundle-tile__title">站点设置</span>
+                      <span class="maint-bundle-tile__desc">各组品牌与登录路径</span>
+                    </div>
+                    <div class="maint-bundle-tile__actions">
+                      <button type="button" class="maint-bundle-btn maint-bundle-btn--backup" id="maint-export-site" ${canWrite ? '' : 'disabled'}>备份</button>
+                      <button type="button" class="maint-bundle-btn maint-bundle-btn--restore" id="maint-import-site" ${canWrite ? '' : 'disabled'}>恢复</button>
+                    </div>
+                  </div>
+                  <div class="maint-bundle-tile">
+                    <div class="maint-bundle-tile__head">
+                      <span class="maint-bundle-tile__title">权限管理</span>
+                      <span class="maint-bundle-tile__desc">访问组与账号分配（不含密码）</span>
+                    </div>
+                    <div class="maint-bundle-tile__actions">
+                      <button type="button" class="maint-bundle-btn maint-bundle-btn--backup" id="maint-export-access" ${canWrite ? '' : 'disabled'}>备份</button>
+                      <button type="button" class="maint-bundle-btn maint-bundle-btn--restore" id="maint-import-access" ${canWrite ? '' : 'disabled'}>恢复</button>
+                    </div>
+                  </div>
                 </div>
                 <div id="maint-backup-progress" class="maint-backup-progress" hidden aria-live="polite">
                   <div class="maint-backup-progress-head">
@@ -168,7 +227,7 @@ export function mountMaintenancePanel(container, options = {}) {
                   </div>
                   <div>
                     <h3 class="maint-card-title">自动备份</h3>
-                    <p class="maint-card-desc">服务运行期间按间隔备份，前缀 <code>backupdata-auto-</code></p>
+                    <p class="maint-card-desc">服务运行期间按间隔备份下方勾选内容，文件名前缀 <code>backupdata-auto-</code></p>
                   </div>
                   <span class="maint-badge" id="maint-auto-badge" data-state="off">未启用</span>
                 </div>
@@ -180,14 +239,12 @@ export function mountMaintenancePanel(container, options = {}) {
                       <span class="maint-switch-slider"></span>
                     </label>
                   </label>
+                  <div class="maint-auto-targets">
+                    <span class="maint-form-label">备份内容</span>
+                    <div class="maint-auto-targets-grid" id="maint-auto-targets-grid"></div>
+                    <span class="maint-form-hint">可勾选左侧全部备份项</span>
+                  </div>
                   <div class="maint-form-grid">
-                    <label class="maint-form-field">
-                      <span class="maint-form-label">备份类型</span>
-                      <select id="maint-auto-mode" class="wp-select" ${canWrite ? '' : 'disabled'}>
-                        <option value="data">仅数据（.db）</option>
-                        <option value="full">全量（.zip 含图片与模板库）</option>
-                      </select>
-                    </label>
                     <label class="maint-form-field">
                       <span class="maint-form-label">备份间隔</span>
                       <select id="maint-auto-interval" class="wp-select" ${canWrite ? '' : 'disabled'}></select>
@@ -219,66 +276,6 @@ export function mountMaintenancePanel(container, options = {}) {
               </section>
             </div>
 
-            <section class="maint-action-card maint-module-lib">
-              <div class="maint-action-card-head">
-                <div class="maint-action-card-icon maint-action-card-icon--backup" aria-hidden="true">
-                  <svg viewBox="0 0 24 24"><path fill="currentColor" d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm4 18H6V4h7v5h5v11z"/></svg>
-                </div>
-                <div>
-                  <h3 class="maint-card-title">模块备份</h3>
-                  <p class="maint-card-desc">模板库、字体源、站点设置与权限管理可单独备份/恢复，互不影响；SVG 为 ZIP，其余为 JSON。</p>
-                </div>
-              </div>
-              <ul class="maint-module-lib-list">
-                <li class="maint-module-lib-row">
-                  <span class="maint-module-lib-label">SVG 模板库</span>
-                  <span class="maint-module-lib-hint">.svg 文件 ZIP</span>
-                  <div class="maint-module-lib-actions">
-                    <button type="button" class="button button-secondary button-sm" id="maint-export-svg" ${canWrite ? '' : 'disabled'}>导出 ZIP</button>
-                    <button type="button" class="button button-secondary button-sm" id="maint-import-svg" ${canWrite ? '' : 'disabled'}>导入 ZIP</button>
-                  </div>
-                </li>
-                <li class="maint-module-lib-row">
-                  <span class="maint-module-lib-label">表格模板库</span>
-                  <div class="maint-module-lib-actions">
-                    <button type="button" class="button button-secondary button-sm" id="maint-export-table" ${canWrite ? '' : 'disabled'}>导出</button>
-                    <button type="button" class="button button-secondary button-sm" id="maint-import-table" ${canWrite ? '' : 'disabled'}>导入</button>
-                  </div>
-                </li>
-                <li class="maint-module-lib-row">
-                  <span class="maint-module-lib-label">布局模板库</span>
-                  <div class="maint-module-lib-actions">
-                    <button type="button" class="button button-secondary button-sm" id="maint-export-layout" ${canWrite ? '' : 'disabled'}>导出</button>
-                    <button type="button" class="button button-secondary button-sm" id="maint-import-layout" ${canWrite ? '' : 'disabled'}>导入</button>
-                  </div>
-                </li>
-                <li class="maint-module-lib-row maint-module-lib-row--sep">
-                  <span class="maint-module-lib-label">字体源</span>
-                  <span class="maint-module-lib-hint">字体列表与地址</span>
-                  <div class="maint-module-lib-actions">
-                    <button type="button" class="button button-secondary button-sm" id="maint-export-fonts" ${canWrite ? '' : 'disabled'}>导出</button>
-                    <button type="button" class="button button-secondary button-sm" id="maint-import-fonts" ${canWrite ? '' : 'disabled'}>导入</button>
-                  </div>
-                </li>
-                <li class="maint-module-lib-row">
-                  <span class="maint-module-lib-label">站点设置</span>
-                  <span class="maint-module-lib-hint">各组品牌与登录路径</span>
-                  <div class="maint-module-lib-actions">
-                    <button type="button" class="button button-secondary button-sm" id="maint-export-site" ${canWrite ? '' : 'disabled'}>导出</button>
-                    <button type="button" class="button button-secondary button-sm" id="maint-import-site" ${canWrite ? '' : 'disabled'}>导入</button>
-                  </div>
-                </li>
-                <li class="maint-module-lib-row">
-                  <span class="maint-module-lib-label">权限管理</span>
-                  <span class="maint-module-lib-hint">访问组与账号分配（不含密码）</span>
-                  <div class="maint-module-lib-actions">
-                    <button type="button" class="button button-secondary button-sm" id="maint-export-access" ${canWrite ? '' : 'disabled'}>导出</button>
-                    <button type="button" class="button button-secondary button-sm" id="maint-import-access" ${canWrite ? '' : 'disabled'}>导入</button>
-                  </div>
-                </li>
-              </ul>
-              <div id="maint-module-lib-status" class="maint-toast" role="status" hidden></div>
-            </section>
           </div>
 
           <div class="maint-panel" data-panel="cleanup" role="tabpanel" hidden>
@@ -334,8 +331,8 @@ export function mountMaintenancePanel(container, options = {}) {
   const cleanupStatus = container.querySelector('#maint-cleanup-status')
   const unusedList = container.querySelector('#maint-unused-list')
   const cleanupBtn = container.querySelector('#maint-cleanup')
-  const backupBtn = container.querySelector('#maint-backup')
-  const backupDesc = container.querySelector('#maint-backup-desc')
+  const backupDbBtn = container.querySelector('#maint-backup-db')
+  const backupUploadsBtn = container.querySelector('#maint-backup-uploads')
   const backupProgress = container.querySelector('#maint-backup-progress')
   const backupProgressTitle = container.querySelector('#maint-backup-progress-title')
   const backupProgressPct = container.querySelector('#maint-backup-progress-pct')
@@ -343,13 +340,13 @@ export function mountMaintenancePanel(container, options = {}) {
   const backupProgressDetail = container.querySelector('#maint-backup-progress-detail')
   const backupProgressFile = container.querySelector('#maint-backup-progress-file')
   const backupProgressSteps = container.querySelector('#maint-backup-progress-steps')
-  const backupModeInputs = container.querySelectorAll('input[name="maint-backup-mode"]')
-  const restoreInput = container.querySelector('#maint-restore-file')
+  const restoreDbInput = container.querySelector('#maint-restore-db-file')
+  const restoreUploadsInput = container.querySelector('#maint-restore-uploads-file')
+  const autoTargetsGrid = container.querySelector('#maint-auto-targets-grid')
   const scanBtn = container.querySelector('#maint-scan-unused')
   const autoForm = container.querySelector('#maint-auto-form')
   const autoEnabled = container.querySelector('#maint-auto-enabled')
   const autoInterval = container.querySelector('#maint-auto-interval')
-  const autoMode = container.querySelector('#maint-auto-mode')
   const autoDir = container.querySelector('#maint-auto-dir')
   const autoKeep = container.querySelector('#maint-auto-keep')
   const autoLast = container.querySelector('#maint-auto-last')
@@ -407,15 +404,13 @@ export function mountMaintenancePanel(container, options = {}) {
     prepare: '准备',
     db: '数据库快照',
     uploads: 'uploads 图片',
-    svg: 'SVG 模板库',
-    'template-libs': '表格/布局模板库',
     manifest: 'manifest.json',
     compress: 'ZIP 压缩',
     write: '写入磁盘',
     done: '完成',
   }
 
-  const BACKUP_STAGES_FULL = ['prepare', 'db', 'uploads', 'svg', 'template-libs', 'manifest', 'compress', 'write', 'done']
+  const BACKUP_STAGES_UPLOADS = ['prepare', 'uploads', 'manifest', 'compress', 'write', 'done']
   const BACKUP_STAGES_DATA = ['prepare', 'db', 'write', 'done']
 
   const RESTORE_STAGE_LABELS = {
@@ -434,11 +429,11 @@ export function mountMaintenancePanel(container, options = {}) {
   let backupCompletedStages = new Set()
 
   function resetBackupProgress(mode, customTitle) {
-    backupActiveStages = mode === 'full' ? BACKUP_STAGES_FULL : BACKUP_STAGES_DATA
+    backupActiveStages = mode === 'uploads' ? BACKUP_STAGES_UPLOADS : BACKUP_STAGES_DATA
     backupCompletedStages = new Set()
     if (backupProgressTitle) {
       backupProgressTitle.textContent = customTitle
-        || (mode === 'full' ? '正在创建全量备份' : '正在创建数据备份')
+        || (mode === 'uploads' ? '正在创建 uploads 备份' : '正在创建数据库备份')
     }
     if (backupProgressPct) backupProgressPct.textContent = '0%'
     if (backupProgressFill) backupProgressFill.style.width = '0%'
@@ -467,12 +462,12 @@ export function mountMaintenancePanel(container, options = {}) {
     }
   }
 
-  function showRestoreProgress(visible) {
+  function showRestoreProgress(visible, title = '正在恢复数据库') {
     if (!backupProgress) return
     if (visible) {
       backupActiveStages = RESTORE_STAGES
       backupCompletedStages = new Set()
-      if (backupProgressTitle) backupProgressTitle.textContent = '正在恢复数据库'
+      if (backupProgressTitle) backupProgressTitle.textContent = title
       if (backupProgressPct) backupProgressPct.textContent = '0%'
       if (backupProgressFill) backupProgressFill.style.width = '0%'
       if (backupProgressDetail) backupProgressDetail.textContent = '准备中…'
@@ -509,7 +504,7 @@ export function mountMaintenancePanel(container, options = {}) {
       if (evt.file) {
         backupProgressFile.hidden = false
         backupProgressFile.textContent = evt.file
-      } else if (evt.stage !== 'uploads' && evt.stage !== 'svg' && evt.stage !== 'template-libs') {
+      } else if (evt.stage !== 'uploads') {
         backupProgressFile.hidden = true
         backupProgressFile.textContent = ''
       }
@@ -569,24 +564,16 @@ export function mountMaintenancePanel(container, options = {}) {
     }
   }
 
-  function getManualBackupMode() {
-    const checked = container.querySelector('input[name="maint-backup-mode"]:checked')
-    return checked?.value === 'full' ? 'full' : 'data'
+  function renderAutoBackupTargets(config) {
+    if (!autoTargetsGrid) return
+    const options = config?.target_options || []
+    autoTargetsGrid.innerHTML = options.map((opt) => `
+      <label class="maint-auto-target">
+        <input type="checkbox" data-auto-target="${escapeAttr(opt.key)}" ${opt.checked ? 'checked' : ''} ${canWrite ? '' : 'disabled'} />
+        <span>${escapeHtml(opt.label)}</span>
+      </label>
+    `).join('')
   }
-
-  function syncBackupModeUi() {
-    const mode = getManualBackupMode()
-    if (backupDesc) {
-      backupDesc.textContent = mode === 'full'
-        ? '生成并下载 .zip 全量包'
-        : '生成并下载 .db 文件'
-    }
-  }
-
-  backupModeInputs.forEach((input) => {
-    input.addEventListener('change', syncBackupModeUi)
-  })
-  syncBackupModeUi()
 
   function fillAutoBackupForm(config) {
     if (!config) return
@@ -594,9 +581,9 @@ export function mountMaintenancePanel(container, options = {}) {
     autoInterval.innerHTML = (config.interval_options || []).map((o) =>
       `<option value="${o.hours}"${o.hours === config.interval_hours ? ' selected' : ''}>${o.label}</option>`,
     ).join('')
-    if (autoMode) autoMode.value = config.backup_mode === 'full' ? 'full' : 'data'
     autoDir.value = config.backup_dir || 'data/backups'
     autoKeep.value = String(config.keep_count ?? 30)
+    renderAutoBackupTargets(config)
     if (config.resolved_dir) {
       autoResolved.hidden = false
       autoResolved.textContent = `实际路径：${config.resolved_dir}`
@@ -621,12 +608,19 @@ export function mountMaintenancePanel(container, options = {}) {
   }
 
   function readAutoBackupForm() {
+    /** @type {Record<string, boolean>} */
+    const backup_targets = {}
+    container.querySelectorAll('[data-auto-target]').forEach((input) => {
+      if (input instanceof HTMLInputElement && input.dataset.autoTarget) {
+        backup_targets[input.dataset.autoTarget] = input.checked
+      }
+    })
     return {
       enabled: autoEnabled.checked,
       interval_hours: Number(autoInterval.value),
-      backup_mode: autoMode?.value === 'full' ? 'full' : 'data',
       backup_dir: autoDir.value.trim(),
       keep_count: Number(autoKeep.value),
+      backup_targets,
     }
   }
 
@@ -704,7 +698,7 @@ export function mountMaintenancePanel(container, options = {}) {
 
   /**
    * @param {{
-   *   mode: 'data' | 'full',
+   *   mode: 'data' | 'uploads',
    *   title?: string,
    *   runBackup: (onProgress: (evt: object) => void) => Promise<object>,
    *   toastEl: HTMLElement | null,
@@ -717,27 +711,27 @@ export function mountMaintenancePanel(container, options = {}) {
     updateBackupProgress({
       stage: 'prepare',
       pct: 0,
-      detail: mode === 'full' ? '正在准备全量备份…' : '正在准备数据备份…',
+      detail: mode === 'uploads' ? '正在准备 uploads 备份…' : '正在准备数据库备份…',
     })
     try {
       const result = await runBackup((evt) => updateBackupProgress(evt))
       if (result.skipped) {
         showBackupProgress(mode, false)
+        const skipNames = (result.files || []).map((f) => f.filename).filter(Boolean)
+        const skipLabel = skipNames.length > 1
+          ? `${skipNames.length} 个文件（${skipNames.join('、')}）`
+          : (result.filename || skipNames[0] || '上次备份')
         showToast(
           toastEl,
-          `数据无变化，跳过备份（沿用 ${result.filename}）`,
+          `数据无变化，跳过备份（沿用 ${skipLabel}）`,
         )
         return result
       }
       const gotZip = /\.zip$/i.test(result.filename || '')
       const gotDb = /\.db$/i.test(result.filename || '')
-      if (mode === 'full' && !gotZip) {
+      if (mode === 'uploads' && !gotZip) {
         showBackupProgress(mode, false)
-        showToast(
-          toastEl,
-          `后端仍返回 .db（${result.filename || '未知'}），全量 ZIP 未生效。请 Ctrl+C 后重新 npm run dev:local`,
-          true,
-        )
+        showToast(toastEl, `uploads 备份格式异常：${result.filename || '未知'}`, true)
         return null
       }
       if (mode === 'data' && !gotDb) {
@@ -745,14 +739,22 @@ export function mountMaintenancePanel(container, options = {}) {
         showToast(toastEl, `备份格式异常：${result.filename || '未知'}`, true)
         return null
       }
-      updateBackupProgress({ stage: 'done', pct: 100, detail: `备份完成：${result.filename}` })
-      const extra = mode === 'full' && result.includes
-        ? ` · 图片 ${result.includes.uploads ?? 0} · SVG ${result.includes.svg_templates ?? 0} · 表格 ${result.includes.table_templates ?? 0} · 布局 ${result.includes.layout_presets ?? 0}`
+      updateBackupProgress({ stage: 'done', pct: 100, detail: '备份完成' })
+      const fileItems = (result.files || []).length
+        ? result.files
+        : (result.filename ? [{ filename: result.filename, size_label: result.size_label }] : [])
+      const names = fileItems.map((f) => f.filename).filter(Boolean)
+      const nameLabel = names.length > 1
+        ? `${names.length} 个文件：${names.join('、')}`
+        : (names[0] || result.filename || '备份')
+      const extra = mode === 'uploads' && result.includes
+        ? ` · ${result.includes.uploads ?? 0} 个文件`
         : ''
-      const pruneNote = result.removed_old ? ` · 已清理旧备份 ${result.removed_old} 个` : ''
+      const pruneNote = result.removed_old ? ` · 已清理旧批次 ${result.removed_old} 个文件` : ''
+      const sizeLabel = result.size_label || formatBytes(result.size_bytes)
       showToast(
         toastEl,
-        `已创建 ${result.filename}（${result.size_label}，${formatCounts(result.counts)}${extra}${pruneNote}）`,
+        `已创建 ${nameLabel}（${sizeLabel}${result.counts ? `，${formatCounts(result.counts)}` : ''}${extra}${pruneNote}）`,
       )
       if (download && result.download_url) {
         const a = document.createElement('a')
@@ -771,29 +773,37 @@ export function mountMaintenancePanel(container, options = {}) {
     }
   }
 
-  backupBtn?.addEventListener('click', async () => {
-    const mode = getManualBackupMode()
-    backupBtn.disabled = true
-    autoRunBtn && (autoRunBtn.disabled = true)
+  async function runManualBackup(mode) {
+    const buttons = [backupDbBtn, backupUploadsBtn, autoRunBtn].filter(Boolean)
+    buttons.forEach((btn) => { btn.disabled = true })
     await performBackupFlow({
       mode,
-      runBackup: (onProgress) => api.createDatabaseBackupWithProgress(mode, onProgress),
+      runBackup: (onProgress) => (mode === 'uploads'
+        ? api.createUploadsBackupWithProgress(onProgress)
+        : api.createDatabaseBackupWithProgress(onProgress)),
       toastEl: dbStatus,
       download: true,
     })
-    backupBtn.disabled = !canWrite
-    if (autoRunBtn) autoRunBtn.disabled = !canWrite
+    buttons.forEach((btn) => { btn.disabled = !canWrite })
+  }
+
+  backupDbBtn?.addEventListener('click', () => {
+    void runManualBackup('data')
   })
 
-  restoreInput?.addEventListener('change', async () => {
-    const file = restoreInput.files?.[0]
-    restoreInput.value = ''
+  backupUploadsBtn?.addEventListener('click', () => {
+    void runManualBackup('uploads')
+  })
+
+  restoreDbInput?.addEventListener('change', async () => {
+    const file = restoreDbInput.files?.[0]
+    restoreDbInput.value = ''
     if (!file || !/\.db$/i.test(file.name)) {
       showToast(dbStatus, '请选择 .db 备份文件', true)
       return
     }
     if (!window.confirm(`确定用「${file.name}」恢复数据库吗？\n\n当前数据将被覆盖。`)) return
-    showRestoreProgress(true)
+    showRestoreProgress(true, '正在恢复数据库')
     updateBackupProgress({
       stage: 'validate',
       pct: 0,
@@ -809,6 +819,35 @@ export function mountMaintenancePanel(container, options = {}) {
       lastScan = null
       renderUnusedPreview(null)
       setTimeout(() => window.location.reload(), 1500)
+    } catch (err) {
+      showRestoreProgress(false)
+      showToast(dbStatus, err.message, true)
+    }
+  })
+
+  restoreUploadsInput?.addEventListener('change', async () => {
+    const file = restoreUploadsInput.files?.[0]
+    restoreUploadsInput.value = ''
+    if (!file || !/\.zip$/i.test(file.name)) {
+      showToast(dbStatus, '请选择 uploads ZIP 备份文件', true)
+      return
+    }
+    if (!window.confirm(`确定用「${file.name}」恢复 uploads 吗？\n\n同名文件将被覆盖。`)) return
+    showRestoreProgress(true, '正在恢复 uploads')
+    updateBackupProgress({
+      stage: 'validate',
+      pct: 0,
+      detail: `正在上传 ${file.name}…`,
+    })
+    try {
+      const result = await api.restoreUploadsWithProgress(file, (evt) => updateBackupProgress(evt))
+      updateBackupProgress({ stage: 'done', pct: 100, detail: '恢复完成' })
+      showToast(
+        dbStatus,
+        `${result.message || 'uploads 恢复完成'}。恢复前备份：${result.safety_backup}（${result.restored_count ?? 0} 个文件）`,
+      )
+      lastScan = null
+      renderUnusedPreview(null)
     } catch (err) {
       showRestoreProgress(false)
       showToast(dbStatus, err.message, true)
@@ -859,12 +898,13 @@ export function mountMaintenancePanel(container, options = {}) {
 
   autoRunBtn?.addEventListener('click', async () => {
     const form = readAutoBackupForm()
-    const mode = form.backup_mode === 'full' ? 'full' : 'data'
     autoRunBtn.disabled = true
-    backupBtn && (backupBtn.disabled = true)
+    backupDbBtn && (backupDbBtn.disabled = true)
+    backupUploadsBtn && (backupUploadsBtn.disabled = true)
+    const checkedCount = Object.values(form.backup_targets || {}).filter(Boolean).length
     const result = await performBackupFlow({
-      mode,
-      title: mode === 'full' ? '正在执行自动备份（全量）' : '正在执行自动备份（仅数据）',
+      mode: 'data',
+      title: checkedCount > 1 ? `正在执行自动备份（${checkedCount} 项）` : '正在执行自动备份',
       runBackup: (onProgress) => api.runAutoBackupWithProgress(form, onProgress),
       toastEl: autoMsg,
       download: false,
@@ -879,10 +919,11 @@ export function mountMaintenancePanel(container, options = {}) {
       }
     }
     autoRunBtn.disabled = !canWrite
-    if (backupBtn) backupBtn.disabled = !canWrite
+    if (backupDbBtn) backupDbBtn.disabled = !canWrite
+    if (backupUploadsBtn) backupUploadsBtn.disabled = !canWrite
   })
 
-  const moduleLibStatus = container.querySelector('#maint-module-lib-status')
+  const moduleLibStatus = dbStatus
   const moduleStamp = () => new Date().toISOString().slice(0, 10)
 
   async function exportModuleLibrary(kind) {
@@ -890,7 +931,7 @@ export function mountMaintenancePanel(container, options = {}) {
     if (kind === 'svg') {
       const { blob, filename } = await api.exportSvgTemplatesZip()
       downloadBlobFile(filename, blob)
-      showToast(moduleLibStatus, `已导出 ${filename}`)
+      showToast(moduleLibStatus, `已备份 ${filename}`)
       return
     }
     let bundle
@@ -917,7 +958,7 @@ export function mountMaintenancePanel(container, options = {}) {
       ?? bundle.groups?.length
       ?? 0
     downloadJsonFile(filename, bundle)
-    showToast(moduleLibStatus, `已导出 ${filename}（${count} 项）`)
+    showToast(moduleLibStatus, `已备份 ${filename}（${count} 项）`)
   }
 
   function readZipFile() {
@@ -948,7 +989,7 @@ export function mountMaintenancePanel(container, options = {}) {
         const file = await readZipFile()
         const result = await api.importSvgTemplatesZip(file, mode)
         alertImportDetails(result)
-        showToast(moduleLibStatus, 'SVG 模板库导入完成')
+        showToast(moduleLibStatus, 'SVG 模板库恢复完成')
         return
       }
       const bundle = await readJsonFile()
@@ -965,7 +1006,7 @@ export function mountMaintenancePanel(container, options = {}) {
         result = await api.importAccessPermissionsBackup(bundle, mode)
       }
       alertImportDetails(result)
-      showToast(moduleLibStatus, '模块备份导入完成')
+      showToast(moduleLibStatus, '模块备份恢复完成')
     } catch (err) {
       if (err.message !== '已取消') showToast(moduleLibStatus, err.message, true)
     }

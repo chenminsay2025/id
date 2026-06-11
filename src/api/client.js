@@ -96,8 +96,8 @@ async function uploadRequest(path, formData) {
   return data
 }
 
-/** @param {(evt: object) => void} onProgress @param {() => Promise<object>} runRequest */
-function runWithBackupProgressPoll(onProgress, runRequest) {
+/** @param {(evt: object) => void} onProgress @param {() => Promise<object>} runRequest @param {'data' | 'uploads'} [progressMode] */
+function runWithBackupProgressPoll(onProgress, runRequest, progressMode = 'data') {
   return new Promise((resolve, reject) => {
     let stopped = false
     let progressPolling = true
@@ -106,24 +106,25 @@ function runWithBackupProgressPoll(onProgress, runRequest) {
     /** @type {ReturnType<typeof setInterval> | null} */
     let simulateTimer = null
     let simulatedPct = 8
-    let simulatedFull = false
+    let simulatedMode = progressMode
 
-    const startSimulatedProgress = (full = false) => {
+    const startSimulatedProgress = (mode = progressMode) => {
       if (simulateTimer) return
-      simulatedFull = full
+      simulatedMode = mode
+      const detail = mode === 'uploads'
+        ? '正在打包 uploads…（重启 npm run dev:local 后可显示逐步进度）'
+        : '正在创建数据库备份…（重启 npm run dev:local 后可显示逐步进度）'
       onProgress?.({
-        stage: 'db',
+        stage: mode === 'uploads' ? 'uploads' : 'db',
         pct: simulatedPct,
-        detail: full
-          ? '正在创建全量备份…（重启 npm run dev:local 后可显示逐步进度）'
-          : '正在创建数据备份…（重启 npm run dev:local 后可显示逐步进度）',
+        detail,
       })
       simulateTimer = setInterval(() => {
         simulatedPct = Math.min(94, simulatedPct + 1.5 + Math.random() * 2)
         onProgress?.({
-          stage: simulatedPct > 70 ? 'compress' : 'db',
+          stage: simulatedPct > 70 ? 'compress' : (simulatedMode === 'uploads' ? 'uploads' : 'db'),
           pct: Math.round(simulatedPct),
-          detail: simulatedFull ? '正在打包与压缩，请稍候…' : '正在导出数据库，请稍候…',
+          detail: simulatedMode === 'uploads' ? '正在打包图片，请稍候…' : '正在导出数据库，请稍候…',
         })
       }, 450)
     }
@@ -134,13 +135,13 @@ function runWithBackupProgressPoll(onProgress, runRequest) {
         const res = await fetch(`${API_BASE}/api/maintenance/backup-progress`, { credentials: 'include' })
         if (res.status === 404) {
           progressPolling = false
-          startSimulatedProgress(simulatedFull)
+          startSimulatedProgress(simulatedMode)
           return
         }
         if (!res.ok) return
         const data = await res.json()
         const p = data.progress
-        if (p?.mode === 'full') simulatedFull = true
+        if (p?.mode === 'uploads' || p?.mode === 'data') simulatedMode = p.mode
         if (p && (p.active || p.stage)) onProgress?.(p)
       } catch {
         // 轮询失败时忽略
@@ -521,27 +522,46 @@ export const api = {
 
   getMaintenanceStorage: () => request('/api/maintenance/storage'),
   getDashboardOverview: () => request('/api/dashboard/overview'),
-  createDatabaseBackup: (mode = 'data') => request('/api/maintenance/backup-database', {
+  createDatabaseBackup: () => request('/api/maintenance/backup-database', {
     method: 'POST',
-    body: JSON.stringify({ mode }),
+    body: '{}',
   }),
   getBackupProgress: () => request('/api/maintenance/backup-progress'),
   getRestoreProgress: () => request('/api/maintenance/restore-progress'),
-  createDatabaseBackupWithProgress: (mode = 'data', onProgress) => runWithBackupProgressPoll(onProgress, () =>
+  createDatabaseBackupWithProgress: (onProgress) => runWithBackupProgressPoll(onProgress, () =>
     request('/api/maintenance/backup-database', {
       method: 'POST',
-      body: JSON.stringify({ mode }),
-    }),
-  ),
+      body: '{}',
+    }), 'data'),
+  createUploadsBackupWithProgress: (onProgress) => runWithBackupProgressPoll(onProgress, () =>
+    request('/api/maintenance/backup-uploads', {
+      method: 'POST',
+      body: '{}',
+    }), 'uploads'),
   runAutoBackupWithProgress: (form = {}, onProgress) => runWithBackupProgressPoll(onProgress, () =>
     request('/api/maintenance/auto-backup/run-now', {
       method: 'POST',
       body: JSON.stringify({
-        backup_mode: form.backup_mode,
         backup_dir: form.backup_dir,
+        backup_targets: form.backup_targets,
+        force: form.force,
       }),
-    }),
-  ),
+    }), 'data'),
+  restoreUploads: (file) => {
+    const form = new FormData()
+    form.append('file', file, file.name || 'uploads.zip')
+    return uploadRequest('/api/maintenance/restore-uploads', form)
+  },
+  restoreUploadsWithProgress: (file, onProgress) => runWithRestoreProgressPoll(onProgress, () => {
+    const form = new FormData()
+    form.append('file', file, file.name || 'uploads.zip')
+    onProgress?.({
+      stage: 'validate',
+      pct: 1,
+      detail: `正在上传 ${file.name || 'uploads.zip'}…`,
+    })
+    return uploadRequest('/api/maintenance/restore-uploads', form)
+  }),
   restoreDatabase: (file) => {
     const form = new FormData()
     form.append('file', file, file.name || 'backup.db')
