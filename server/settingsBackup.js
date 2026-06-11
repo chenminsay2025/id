@@ -76,22 +76,33 @@ export function importFontSettings(db, bundle, opts = {}) {
 export function exportSiteSettings(db) {
   const brandingRows = db.prepare(`
     SELECT group_id, app_name, app_name_full, entity_label, brand_mark,
-           public_base_url, public_cert_param, public_cert_url_style
+           public_base_url, public_cert_param, public_cert_url_style, excel_import_image_config
     FROM site_branding_by_group
     ORDER BY group_id
   `).all()
-  const branding = brandingRows.map((row) => ({
-    group_slug: slugByGroupId(db, row.group_id),
-    ...normalizeSiteConfig({
-      appName: row.app_name,
-      appNameFull: row.app_name_full,
-      entityLabel: row.entity_label,
-      brandMark: row.brand_mark,
-      publicBaseUrl: row.public_base_url,
-      publicCertParam: row.public_cert_param,
-      publicCertUrlStyle: row.public_cert_url_style,
-    }),
-  })).filter((item) => item.group_slug)
+  const branding = brandingRows.map((row) => {
+    let excelImportImage
+    if (row.excel_import_image_config) {
+      try {
+        excelImportImage = JSON.parse(row.excel_import_image_config)
+      } catch {
+        excelImportImage = undefined
+      }
+    }
+    return {
+      group_slug: slugByGroupId(db, row.group_id),
+      ...normalizeSiteConfig({
+        appName: row.app_name,
+        appNameFull: row.app_name_full,
+        entityLabel: row.entity_label,
+        brandMark: row.brand_mark,
+        publicBaseUrl: row.public_base_url,
+        publicCertParam: row.public_cert_param,
+        publicCertUrlStyle: row.public_cert_url_style,
+        excelImportImage,
+      }),
+    }
+  }).filter((item) => item.group_slug)
 
   return {
     version: DATA_TRANSFER_VERSION,

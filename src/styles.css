@@ -12146,6 +12146,41 @@ body.layout-collapsible-reorder-active * {
   grid-column: 1 / -1;
 }
 
+.site-settings-excel-import {
+  margin-top: 8px;
+  padding-top: 20px;
+  border-top: 1px solid var(--admin-border);
+}
+
+.site-settings-desc--compact {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.site-settings-field--checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.site-settings-field--checkbox input[type='checkbox'] {
+  width: auto;
+}
+
+.site-settings-grid--excel-import {
+  margin-top: 4px;
+}
+
+.site-settings-excel-import-preview {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid var(--admin-border);
+}
+
 .site-settings-preview--url {
   margin-top: 0;
 }

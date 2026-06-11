@@ -106,7 +106,8 @@ import {
 import { EMPTY_SVG_TEMPLATE, loadSvgTemplateContentResult } from './svgTemplateLoader.js'
 import { requireAdminSession } from './admin/guard.js'
 import { mountCmsBar } from './admin/cms.js'
-import { loadSiteConfig, applyDocumentTitle } from './siteConfig.js'
+import { loadSiteConfig, applyDocumentTitle, getSiteConfig } from './siteConfig.js'
+import { normalizeExcelImportImageConfig } from './excelImportImageConfig.js'
 import { api } from './api/client.js'
 import { mountSpreadsheetTable } from './spreadsheetTable.js'
 import { formatImageCellValue } from './cellMedia.js'
@@ -2220,6 +2221,7 @@ async function loadExcelRowsWithEmbeddedImages(buf, templateColumns, reportProgr
   )
   await yieldToMain()
   const largeFile = buf.byteLength >= 8 * 1024 * 1024
+  const compressConfig = normalizeExcelImportImageConfig(getSiteConfig()?.excelImportImage)
   const { data: resolvedData, stats } = await replaceDispImgCellsInRows(
     buf,
     worksheet,
@@ -2228,6 +2230,7 @@ async function loadExcelRowsWithEmbeddedImages(buf, templateColumns, reportProgr
     excelRowNumbers,
     (file) => api.uploadMedia(file),
     {
+      compressConfig,
       onProgress: (info) => reportImageImportProgress(info, report),
       loadZipWithProgress: largeFile
         ? (zipBuf) => loadExcelZipArchive(zipBuf, (info) => {
@@ -2241,12 +2244,21 @@ async function loadExcelRowsWithEmbeddedImages(buf, templateColumns, reportProgr
     },
   )
   if (stats.uploaded > 0 || stats.missing > 0) {
+    const compressLines = []
+    const cs = stats.compress
+    if (cs?.processed > 0) {
+      const saved = Math.max(0, (cs.beforeBytes || 0) - (cs.afterBytes || 0))
+      compressLines.push(
+        `压缩 ${cs.compressed || 0} 张，跳过 ${cs.skipped || 0}，节省 ${formatImportFileSize(saved)}`,
+      )
+    }
     report(
       85,
       '嵌入图完成',
       [
         `成功上传 ${stats.uploaded} 张`,
         stats.missing ? `未匹配/失败 ${stats.missing} 张` : '全部匹配成功',
+        ...compressLines,
       ],
       { logLine: `嵌入图：成功 ${stats.uploaded}，失败 ${stats.missing}` },
     )

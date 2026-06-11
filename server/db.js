@@ -237,6 +237,13 @@ function runMigrations(db) {
     `)
   })
 
+  // v9: 站点设置 — Excel 导入图片压缩
+  applyMigration(db, 9, (db) => {
+    if (tableExists(db, 'site_branding_by_group')) {
+      ensureColumn(db, 'site_branding_by_group', 'excel_import_image_config', 'TEXT')
+    }
+  })
+
   // 向后兼容：如果数据库已有这些表但没有 migrations 记录，
   // 检测并把所有版本标记为已应用（避免对已有数据库重复执行）
   backfillMigrationVersions(db)
@@ -260,10 +267,10 @@ function backfillMigrationVersions(db) {
   // 数据库已存在，标记所有版本为已应用
   const now = new Date().toISOString()
   const stmt = db.prepare('INSERT OR IGNORE INTO migrations (version, applied_at) VALUES (?, ?)')
-  for (let v = 1; v <= 8; v++) {
+  for (let v = 1; v <= 9; v++) {
     stmt.run(v, now)
   }
-  console.log('[DB] 检测到已有数据库，已回填迁移版本 v1-v8')
+  console.log('[DB] 检测到已有数据库，已回填迁移版本 v1-v9')
 }
 
 /** 首次添加 sort_order 时，按旧列表规则（默认优先、更新时间）写入顺序 */

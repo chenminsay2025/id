@@ -1,5 +1,9 @@
 import { api } from './api/client.js'
 import {
+  defaultExcelImportImageConfig,
+  normalizeExcelImportImageConfig,
+} from './excelImportImageConfig.js'
+import {
   buildPublicCertUrl as buildPublicCertUrlCore,
   normalizePublicBaseUrl,
   normalizePublicCertParam,
@@ -33,6 +37,7 @@ export function defaultSiteConfig() {
     publicBaseUrl: '',
     publicCertParam: 'cert',
     publicCertUrlStyle: 'query',
+    excelImportImage: defaultExcelImportImageConfig(),
   }
 }
 
@@ -63,6 +68,9 @@ export function normalizeSiteConfig(input) {
     publicBaseUrl: normalizePublicBaseUrl(input?.publicBaseUrl ?? input?.public_base_url),
     publicCertParam: normalizePublicCertParam(input?.publicCertParam ?? input?.public_cert_param),
     publicCertUrlStyle: normalizePublicCertUrlStyle(input?.publicCertUrlStyle ?? input?.public_cert_url_style),
+    excelImportImage: normalizeExcelImportImageConfig(
+      input?.excelImportImage ?? input?.excel_import_image ?? base.excelImportImage,
+    ),
   }
 }
 

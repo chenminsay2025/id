@@ -249,6 +249,14 @@ export function reportImageImportProgress(info, report) {
     return
   }
 
+  if (phase === 'compress') {
+    report(59, '准备图片压缩', [
+      info?.message || '将按站点设置压缩嵌入图后上传',
+      info?.total ? `待处理 ${info.total} 张唯一图片` : '',
+    ], { logLine: info?.logLine })
+    return
+  }
+
   const uniqueTotal = Number(info?.uniqueTotal) || 0
   const uniqueDone = Number(info?.uniqueDone) || 0
   const pct = uniqueTotal > 0
@@ -267,6 +275,19 @@ export function reportImageImportProgress(info, report) {
     lines.push(`最近处理：第 ${rowIdx + 1} 行 · 列「${colName}」`)
   }
   lines.push(`统计：已成功 ${uploaded} · 失败/未匹配 ${missing}${remain && !uniqueTotal ? ` · 剩余 ${remain}` : ''}`)
+  const cs = info?.compressStats
+  if (cs && cs.processed > 0) {
+    const saved = Math.max(0, (cs.beforeBytes || 0) - (cs.afterBytes || 0))
+    const savedPct = cs.beforeBytes > 0 ? Math.round((saved / cs.beforeBytes) * 100) : 0
+    lines.push(
+      `压缩：已处理 ${cs.processed} · 已压缩 ${cs.compressed || 0} · 跳过 ${cs.skipped || 0} · 失败 ${cs.failed || 0}`,
+    )
+    if (cs.beforeBytes > 0) {
+      lines.push(
+        `体积：${formatImportFileSize(cs.beforeBytes)} → ${formatImportFileSize(cs.afterBytes)}（节省 ${savedPct}%）`,
+      )
+    }
+  }
   if (blobBytes) {
     lines.push(`本张：${formatImportFileSize(blobBytes)}${cached ? '（已上传过，跳过）' : ''}`)
   }

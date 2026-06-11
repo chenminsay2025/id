@@ -1,5 +1,9 @@
 import { getDefaultGroupId } from './accessControl.js'
 import {
+  defaultExcelImportImageConfig,
+  normalizeExcelImportImageConfig,
+} from '../src/excelImportImageConfig.js'
+import {
   buildPublicCertUrl,
   normalizePublicBaseUrl,
   normalizePublicCertParam,
@@ -24,6 +28,7 @@ export function defaultSiteConfig() {
     publicBaseUrl: '',
     publicCertParam: 'cert',
     publicCertUrlStyle: 'query',
+    excelImportImage: defaultExcelImportImageConfig(),
   }
 }
 
@@ -61,7 +66,28 @@ export function normalizeSiteConfig(input) {
   const publicBaseUrl = normalizePublicBaseUrl(input?.publicBaseUrl ?? input?.public_base_url)
   const publicCertParam = normalizePublicCertParam(input?.publicCertParam ?? input?.public_cert_param)
   const publicCertUrlStyle = normalizePublicCertUrlStyle(input?.publicCertUrlStyle ?? input?.public_cert_url_style)
-  return { appName, appNameFull, entityLabel, brandMark, publicBaseUrl, publicCertParam, publicCertUrlStyle }
+  const excelImportImage = normalizeExcelImportImageConfig(
+    input?.excelImportImage ?? input?.excel_import_image,
+  )
+  return {
+    appName,
+    appNameFull,
+    entityLabel,
+    brandMark,
+    publicBaseUrl,
+    publicCertParam,
+    publicCertUrlStyle,
+    excelImportImage,
+  }
+}
+
+function parseExcelImportImageConfigColumn(raw) {
+  if (!raw) return defaultExcelImportImageConfig()
+  try {
+    return normalizeExcelImportImageConfig(JSON.parse(raw))
+  } catch {
+    return defaultExcelImportImageConfig()
+  }
 }
 
 // buildPublicCertUrl imported from ../src/publicCertUrl.js
@@ -74,7 +100,7 @@ function readLegacySiteConfig(db) {
 function readGroupSiteConfigRow(db, groupId) {
   if (groupId == null) return null
   const row = db.prepare(`
-    SELECT app_name, app_name_full, entity_label, brand_mark, public_base_url, public_cert_param, public_cert_url_style
+    SELECT app_name, app_name_full, entity_label, brand_mark, public_base_url, public_cert_param, public_cert_url_style, excel_import_image_config
     FROM site_branding_by_group WHERE group_id = ?
   `).get(Number(groupId))
   if (!row) return null
@@ -86,6 +112,7 @@ function readGroupSiteConfigRow(db, groupId) {
     publicBaseUrl: row.public_base_url,
     publicCertParam: row.public_cert_param,
     publicCertUrlStyle: row.public_cert_url_style,
+    excelImportImage: parseExcelImportImageConfigColumn(row.excel_import_image_config),
   })
 }
 
@@ -126,13 +153,14 @@ export function saveSiteConfigForGroup(db, groupId, config) {
   if (!exists) throw new Error('访问组不存在')
 
   const normalized = normalizeSiteConfig(config)
+  const excelImportImageJson = JSON.stringify(normalized.excelImportImage)
   const ts = new Date().toISOString()
   db.prepare(`
     INSERT INTO site_branding_by_group (
       group_id, app_name, app_name_full, entity_label, brand_mark,
-      public_base_url, public_cert_param, public_cert_url_style, updated_at
+      public_base_url, public_cert_param, public_cert_url_style, excel_import_image_config, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(group_id) DO UPDATE SET
       app_name = excluded.app_name,
       app_name_full = excluded.app_name_full,
@@ -141,6 +169,7 @@ export function saveSiteConfigForGroup(db, groupId, config) {
       public_base_url = excluded.public_base_url,
       public_cert_param = excluded.public_cert_param,
       public_cert_url_style = excluded.public_cert_url_style,
+      excel_import_image_config = excluded.excel_import_image_config,
       updated_at = excluded.updated_at
   `).run(
     gid,
@@ -151,6 +180,7 @@ export function saveSiteConfigForGroup(db, groupId, config) {
     normalized.publicBaseUrl || null,
     normalized.publicCertParam,
     normalized.publicCertUrlStyle,
+    excelImportImageJson,
     ts,
   )
   return { ...normalized, group_id: gid }

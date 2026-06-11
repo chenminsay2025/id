@@ -2,6 +2,12 @@ import JSZip from 'jszip'
 import * as XLSX from 'xlsx'
 import { formatImageCellValue } from './cellMedia.js'
 import { runAsyncPool, yieldToMain } from './asyncYield.js'
+import {
+  compressExcelImportImage,
+  createEmptyCompressStats,
+  mergeCompressStats,
+} from './excelImportImageCompress.js'
+import { describeExcelImportImageConfig } from './excelImportImageConfig.js'
 
 /** 嵌入图上传并发数（过大可能压垮本地 API） */
 const DISPIMG_UPLOAD_CONCURRENCY = 6
@@ -213,20 +219,29 @@ export function collectDispImgCellsFromWorksheet(ws) {
   return out
 }
 
-async function uploadDispImgBlob(blobInfo, id, uploadMedia, urlCache) {
+async function uploadDispImgBlob(blobInfo, id, uploadMedia, urlCache, compressConfig, compressStats) {
   const cacheKey = dispImgCacheKey(id)
   let url = urlCache.get(cacheKey)
-  if (url) return url
+  if (url) return { url, compressItem: null }
+
+  let uploadInfo = blobInfo
+  let compressItem = null
+  if (compressConfig?.enabled) {
+    const { blobInfo: nextBlob, stats } = await compressExcelImportImage(blobInfo, compressConfig)
+    uploadInfo = nextBlob
+    compressItem = stats
+    if (compressStats) mergeCompressStats(compressStats, stats)
+  }
 
   const file = new File(
-    [blobInfo.data],
-    `excel-${String(id).slice(-12)}.${blobInfo.ext}`,
-    { type: blobInfo.mime },
+    [uploadInfo.data],
+    `excel-${String(id).slice(-12)}.${uploadInfo.ext}`,
+    { type: uploadInfo.mime },
   )
   const res = await uploadMedia(file)
   url = res.url
   urlCache.set(cacheKey, url)
-  return url
+  return { url, compressItem }
 }
 
 /**
@@ -240,7 +255,7 @@ export async function replaceDispImgCellsInRows(
   headers,
   excelRowNumbers,
   uploadMedia,
-  { onProgress, zip: existingZip = null, loadZipWithProgress = null } = {},
+  { onProgress, zip: existingZip = null, loadZipWithProgress = null, compressConfig = null } = {},
 ) {
   const nextData = data.map((row) => ({ ...row }))
   const slots = collectDispImgSlotsFromData(nextData)
@@ -289,6 +304,16 @@ export async function replaceDispImgCellsInRows(
   const uniqueTotal = uniqueList.length
   let uploadDone = 0
   let lastProgressAt = 0
+  const compressStats = createEmptyCompressStats()
+
+  if (compressConfig?.enabled) {
+    onProgress?.({
+      phase: 'compress',
+      total: uniqueTotal,
+      message: `图片压缩：${describeExcelImportImageConfig(compressConfig)}`,
+      logLine: `图片压缩策略：${describeExcelImportImageConfig(compressConfig)}`,
+    })
+  }
 
   onProgress?.({
     phase: 'upload',
@@ -296,14 +321,24 @@ export async function replaceDispImgCellsInRows(
     total: totalSlots,
     uniqueDone: 0,
     uniqueTotal,
+    compressStats: { ...compressStats },
     message: `共 ${totalSlots} 个单元格含图，去重后需上传 ${uniqueTotal} 张（${DISPIMG_UPLOAD_CONCURRENCY} 路并行）`,
     logLine: `并行上传 ${uniqueTotal} 张唯一嵌入图`,
   })
   await yieldToMain()
 
   await runAsyncPool(uniqueList, DISPIMG_UPLOAD_CONCURRENCY, async ([blobInfo, { sampleId }]) => {
+    let lastCompressItem = null
     try {
-      const url = await uploadDispImgBlob(blobInfo, sampleId, uploadMedia, urlCache)
+      const { url, compressItem } = await uploadDispImgBlob(
+        blobInfo,
+        sampleId,
+        uploadMedia,
+        urlCache,
+        compressConfig,
+        compressStats,
+      )
+      lastCompressItem = compressItem
       blobUrlCache.set(blobInfo, url)
     } catch {
       /* 单张失败不阻断其余 */
@@ -318,6 +353,8 @@ export async function replaceDispImgCellsInRows(
         total: totalSlots,
         uniqueDone: uploadDone,
         uniqueTotal,
+        compressStats: { ...compressStats },
+        blobBytes: lastCompressItem?.afterBytes,
         message: `并行上传 ${uploadDone}/${uniqueTotal} 张唯一图片`,
       })
       await yieldToMain()
@@ -341,7 +378,14 @@ export async function replaceDispImgCellsInRows(
       for (let i = 0; i < unmatched.length; i++) {
         const { rowIdx, colName, id } = unmatched[i]
         try {
-          const url = await uploadDispImgBlob(uniqueRemainingBlobs[i], id, uploadMedia, urlCache)
+          const { url } = await uploadDispImgBlob(
+            uniqueRemainingBlobs[i],
+            id,
+            uploadMedia,
+            urlCache,
+            compressConfig,
+            compressStats,
+          )
           blobUrlCache.set(uniqueRemainingBlobs[i], url)
           nextData[rowIdx][colName] = formatImageCellValue(url)
           applied++
@@ -362,8 +406,12 @@ export async function replaceDispImgCellsInRows(
     uniqueTotal,
     uploaded,
     missing,
+    compressStats: { ...compressStats },
     message: `已写入 ${applied} 格，上传 ${uploaded} 张唯一图`,
   })
 
-  return { data: nextData, stats: { uploaded: applied, missing } }
+  return {
+    data: nextData,
+    stats: { uploaded: applied, missing, compress: { ...compressStats } },
+  }
 }

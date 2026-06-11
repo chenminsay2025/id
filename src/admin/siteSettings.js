@@ -1,6 +1,10 @@
 import { api } from '../api/client.js'
 import { getSiteConfig, setSiteConfig, defaultSiteConfig, buildPublicCertUrl, normalizePublicBaseUrl, normalizePublicCertParam, normalizePublicCertUrlStyle } from '../siteConfig.js'
 import {
+  normalizeExcelImportImageConfig,
+  describeExcelImportImageConfig,
+} from '../excelImportImageConfig.js'
+import {
   validateAdminLoginSlug,
   isDefaultAdminLoginSlug,
   DEFAULT_ADMIN_LOGIN_SLUG,
@@ -106,6 +110,39 @@ export function mountSiteSettingsPanel(container, options = {}) {
             </div>
           </div>
         </div>
+        <section class="site-settings-excel-import">
+          <h3 class="site-settings-section-title">Excel 导入图片压缩</h3>
+          <p class="site-settings-desc site-settings-desc--compact">
+            导入 WPS/Excel 表格中的 DISPIMG 嵌入图时，上传前按下列规则压缩（按访问组生效）。
+          </p>
+          <label class="site-settings-field site-settings-field--checkbox">
+            <input type="checkbox" id="site-excel-img-enabled" checked />
+            <span class="site-settings-label">启用导入时图片压缩</span>
+          </label>
+          <div class="site-settings-grid site-settings-grid--excel-import">
+            <label class="site-settings-field">
+              <span class="site-settings-label">最大宽度（px）</span>
+              <input type="number" id="site-excel-img-max-width" min="0" max="8192" step="1" />
+              <span class="site-settings-hint">0 表示不限制宽度</span>
+            </label>
+            <label class="site-settings-field">
+              <span class="site-settings-label">最大高度（px）</span>
+              <input type="number" id="site-excel-img-max-height" min="0" max="8192" step="1" />
+              <span class="site-settings-hint">0 表示不限制高度</span>
+            </label>
+            <label class="site-settings-field">
+              <span class="site-settings-label">单张大小上限（KB）</span>
+              <input type="number" id="site-excel-img-max-kb" min="0" max="10240" step="1" />
+              <span class="site-settings-hint">超出时自动降低 JPEG 质量；0 表示仅按尺寸压缩</span>
+            </label>
+            <label class="site-settings-field">
+              <span class="site-settings-label">JPEG 质量（%）</span>
+              <input type="number" id="site-excel-img-quality" min="35" max="100" step="1" />
+              <span class="site-settings-hint">默认 85；GIF/SVG 不压缩</span>
+            </label>
+          </div>
+          <p class="site-settings-hint site-settings-excel-import-preview" id="site-excel-img-preview"></p>
+        </section>
         <p id="site-status" class="site-settings-status" role="status"></p>
       </div>
     </div>
@@ -129,6 +166,12 @@ export function mountSiteSettingsPanel(container, options = {}) {
   const adminLoginPathInput = container.querySelector('#site-admin-login-path')
   const publicLoginOriginEl = container.querySelector('#site-public-login-origin')
   const publicLoginPathInput = container.querySelector('#site-public-login-path')
+  const excelImgEnabledInput = container.querySelector('#site-excel-img-enabled')
+  const excelImgMaxWidthInput = container.querySelector('#site-excel-img-max-width')
+  const excelImgMaxHeightInput = container.querySelector('#site-excel-img-max-height')
+  const excelImgMaxKbInput = container.querySelector('#site-excel-img-max-kb')
+  const excelImgQualityInput = container.querySelector('#site-excel-img-quality')
+  const excelImgPreviewEl = container.querySelector('#site-excel-img-preview')
 
   /** @type {{ id: number, name: string }[]} */
   let accessGroups = []
@@ -189,6 +232,16 @@ export function mountSiteSettingsPanel(container, options = {}) {
     statusEl.classList.toggle('site-settings-status--error', isError)
   }
 
+  function readExcelImportImageForm() {
+    return normalizeExcelImportImageConfig({
+      enabled: excelImgEnabledInput?.checked !== false,
+      maxWidth: excelImgMaxWidthInput?.value,
+      maxHeight: excelImgMaxHeightInput?.value,
+      maxFileSizeKb: excelImgMaxKbInput?.value,
+      quality: excelImgQualityInput?.value,
+    })
+  }
+
   function readForm() {
     return {
       appName: appNameInput.value.trim(),
@@ -198,6 +251,7 @@ export function mountSiteSettingsPanel(container, options = {}) {
       publicBaseUrl: normalizePublicBaseUrl(publicBaseUrlInput?.value),
       publicCertParam: normalizePublicCertParam(publicCertParamInput?.value),
       publicCertUrlStyle: normalizePublicCertUrlStyle(publicCertUrlStyleSelect?.value),
+      excelImportImage: readExcelImportImageForm(),
     }
   }
 
@@ -211,6 +265,11 @@ export function mountSiteSettingsPanel(container, options = {}) {
       : `查询参数名，如 ${param} → ?${param}=9`
   }
 
+  function updateExcelImportPreview() {
+    if (!excelImgPreviewEl) return
+    excelImgPreviewEl.textContent = `当前策略：${describeExcelImportImageConfig(readExcelImportImageForm())}`
+  }
+
   function updatePreview() {
     const form = readForm()
     const base = defaultSiteConfig()
@@ -221,6 +280,7 @@ export function mountSiteSettingsPanel(container, options = {}) {
     previewApp.textContent = appName
     previewList.textContent = `${entity}列表`
     updateParamHint()
+    updateExcelImportPreview()
     if (publicUrlPreview) {
       publicUrlPreview.textContent = buildPublicCertUrl(1, form) || '—'
     }
@@ -243,6 +303,12 @@ export function mountSiteSettingsPanel(container, options = {}) {
         c.publicCertUrlStyle ?? c.public_cert_url_style,
       )
     }
+    const imgCfg = normalizeExcelImportImageConfig(c.excelImportImage ?? c.excel_import_image)
+    if (excelImgEnabledInput) excelImgEnabledInput.checked = imgCfg.enabled
+    if (excelImgMaxWidthInput) excelImgMaxWidthInput.value = String(imgCfg.maxWidth)
+    if (excelImgMaxHeightInput) excelImgMaxHeightInput.value = String(imgCfg.maxHeight)
+    if (excelImgMaxKbInput) excelImgMaxKbInput.value = String(imgCfg.maxFileSizeKb)
+    if (excelImgQualityInput) excelImgQualityInput.value = String(Math.round(imgCfg.quality * 100))
     updatePreview()
   }
 
@@ -330,8 +396,21 @@ export function mountSiteSettingsPanel(container, options = {}) {
     setStatus(`已保存（访问组 #${saved.group_id ?? groupId}）${loginNote}`)
   }
 
-  for (const input of [appNameInput, appNameFullInput, entityLabelInput, brandMarkInput, publicBaseUrlInput, publicCertParamInput]) {
+  for (const input of [
+    appNameInput,
+    appNameFullInput,
+    entityLabelInput,
+    brandMarkInput,
+    publicBaseUrlInput,
+    publicCertParamInput,
+    excelImgEnabledInput,
+    excelImgMaxWidthInput,
+    excelImgMaxHeightInput,
+    excelImgMaxKbInput,
+    excelImgQualityInput,
+  ]) {
     input?.addEventListener('input', updatePreview)
+    input?.addEventListener('change', updatePreview)
   }
   publicCertUrlStyleSelect?.addEventListener('change', updatePreview)
 
