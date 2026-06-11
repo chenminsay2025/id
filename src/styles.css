@@ -15342,8 +15342,8 @@ body.layout-collapsible-reorder-active * {
 
 .public-relation-map {
   position: fixed;
-  right: 16px;
-  bottom: 16px;
+  left: 0;
+  top: 0;
   z-index: 10060;
   pointer-events: none;
 }
@@ -15434,7 +15434,7 @@ body.layout-collapsible-reorder-active * {
   background: #fff;
   box-shadow: 0 12px 32px rgba(15, 23, 42, 0.16);
   overflow: hidden;
-  transform-origin: bottom right;
+  transform-origin: top left;
 }
 
 .public-relation-map-panel.is-opening {
@@ -15551,6 +15551,45 @@ body.public-relation-map-dragging .public-relation-map-head {
   flex: 1;
 }
 
+.public-relation-map-scope {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 8px;
+  background: #f1f5f9;
+}
+
+.public-relation-map-scope-btn {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--muted, #64748b);
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.public-relation-map-scope-btn:hover:not(:disabled) {
+  color: var(--text, #334155);
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.public-relation-map-scope-btn.is-active {
+  color: var(--primary, #4f46e5);
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.public-relation-map-scope-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .public-relation-map-search-wrap {
   display: block;
 }
@@ -15650,13 +15689,6 @@ body.public-relation-map-dragging .public-relation-map-head {
 .public-relation-map-toggle-btn {
   font-size: 12px;
   padding: 4px 10px;
-}
-
-@media (max-width: 640px) {
-  .public-relation-map {
-    right: 8px;
-    bottom: 8px;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

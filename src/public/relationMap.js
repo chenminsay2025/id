@@ -11,9 +11,13 @@ const DEFAULT_PANEL_HEIGHT = 400
 const MIN_PANEL_WIDTH = 260
 const MIN_PANEL_HEIGHT = 220
 
+/** @typedef {'current' | 'all'} SearchScope */
 /** @typedef {{
  *   query: string,
+ *   searchScope: SearchScope,
  *   expanded: boolean,
+ *   fabLeft: number | null,
+ *   fabTop: number | null,
  *   left: number | null,
  *   top: number | null,
  *   width: number | null,
@@ -36,7 +40,10 @@ function loadPrefs() {
     if (!raw) {
       return {
         query: '',
+        searchScope: 'all',
         expanded: false,
+        fabLeft: null,
+        fabTop: null,
         left: null,
         top: null,
         width: null,
@@ -45,18 +52,39 @@ function loadPrefs() {
     }
     const parsed = JSON.parse(raw)
     const expanded = typeof parsed.expanded === 'boolean' ? parsed.expanded : false
+    const legacyLeft = Number.isFinite(parsed.left) ? parsed.left : null
+    const legacyTop = Number.isFinite(parsed.top) ? parsed.top : null
+    const fabLeft = Number.isFinite(parsed.fabLeft)
+      ? parsed.fabLeft
+      : (!expanded ? legacyLeft : null)
+    const fabTop = Number.isFinite(parsed.fabTop)
+      ? parsed.fabTop
+      : (!expanded ? legacyTop : null)
+    const panelLeft = Number.isFinite(parsed.panelLeft)
+      ? parsed.panelLeft
+      : (expanded ? legacyLeft : null)
+    const panelTop = Number.isFinite(parsed.panelTop)
+      ? parsed.panelTop
+      : (expanded ? legacyTop : null)
+    const searchScope = parsed.searchScope === 'current' ? 'current' : 'all'
     return {
       query: typeof parsed.query === 'string' ? parsed.query : '',
+      searchScope,
       expanded,
-      left: Number.isFinite(parsed.left) ? parsed.left : null,
-      top: Number.isFinite(parsed.top) ? parsed.top : null,
+      fabLeft,
+      fabTop,
+      left: panelLeft,
+      top: panelTop,
       width: Number.isFinite(parsed.width) ? parsed.width : null,
       height: Number.isFinite(parsed.height) ? parsed.height : null,
     }
   } catch {
     return {
       query: '',
+      searchScope: 'all',
       expanded: false,
+      fabLeft: null,
+      fabTop: null,
       left: null,
       top: null,
       width: null,
@@ -95,6 +123,7 @@ function findMatchPreview(row, query) {
  *   getRowPageNavLabel: (certId: number, rowIndex: number) => string,
  *   getCurrentCertId: () => number | null,
  *   getSelectedRow: () => number,
+ *   getCurrentCertSearchContext: () => { certId: number, certTitle: string, rows: unknown[] } | null,
  *   onJumpToHit: (hit: { certId: number, rowIndex: number }) => void,
  * }} ctx
  */
@@ -148,6 +177,10 @@ export function mountPublicRelationMap(ctx) {
         <button type="button" class="public-relation-map-collapse" id="public-relation-map-collapse" aria-expanded="true" title="收起到图标">×</button>
       </header>
       <div class="public-relation-map-body" id="public-relation-map-body">
+        <div class="public-relation-map-scope" role="group" aria-label="搜索范围">
+          <button type="button" class="public-relation-map-scope-btn" data-scope="current" id="public-relation-map-scope-current">当前页</button>
+          <button type="button" class="public-relation-map-scope-btn" data-scope="all" id="public-relation-map-scope-all">全量数据</button>
+        </div>
         <label class="public-relation-map-search-wrap">
           <input
             type="search"
@@ -180,11 +213,65 @@ export function mountPublicRelationMap(ctx) {
   const collapseBtn = root.querySelector('#public-relation-map-collapse')
   const resizeEl = root.querySelector('#public-relation-map-resize')
   const inputEl = /** @type {HTMLInputElement | null} */ (root.querySelector('#public-relation-map-input'))
+  const scopeCurrentBtn = root.querySelector('#public-relation-map-scope-current')
+  const scopeAllBtn = root.querySelector('#public-relation-map-scope-all')
   const summaryEl = root.querySelector('#public-relation-map-summary')
   const resultsEl = root.querySelector('#public-relation-map-results')
   const headEl = root.querySelector('.public-relation-map-head')
 
   if (inputEl) inputEl.value = prefs.query
+
+  function isCurrentScope() {
+    return prefs.searchScope === 'current'
+  }
+
+  function syncScopeUi() {
+    const current = isCurrentScope()
+    const certCtx = ctx.getCurrentCertSearchContext()
+    scopeCurrentBtn?.classList.toggle('is-active', current)
+    scopeAllBtn?.classList.toggle('is-active', !current)
+    scopeCurrentBtn?.setAttribute('aria-pressed', current ? 'true' : 'false')
+    scopeAllBtn?.setAttribute('aria-pressed', current ? 'false' : 'true')
+    if (scopeCurrentBtn instanceof HTMLButtonElement) {
+      scopeCurrentBtn.disabled = !certCtx
+      scopeCurrentBtn.title = certCtx ? '仅搜索当前打开内容的表格行' : '请先从左侧选择内容'
+    }
+    if (inputEl) {
+      inputEl.placeholder = current
+        ? '搜索当前页表格行…'
+        : '搜索全部列表与全部行…'
+    }
+  }
+
+  function setSearchScope(scope) {
+    /** @type {SearchScope} */
+    const next = scope === 'current' ? 'current' : 'all'
+    if (next === 'current' && !ctx.getCurrentCertSearchContext()) return
+    prefs.searchScope = next
+    savePrefs({ searchScope: next })
+    syncScopeUi()
+    if (prefs.expanded) {
+      if ((inputEl?.value ?? '').trim()) void runSearchNow()
+      else renderResults()
+    }
+  }
+
+  /** @param {string} query @param {unknown[]} rows @param {number} certId @param {string} certTitle */
+  function collectHitsFromRows(query, rows, certId, certTitle) {
+    const found = /** @type {RelationMapHit[]} */ ([])
+    rows.forEach((row, i) => {
+      const blob = extractSearchableTextFromRowData(row)
+      if (!searchTextIncludes(blob, query)) return
+      found.push({
+        certId,
+        certTitle,
+        rowIndex: i,
+        pageNavLabel: ctx.getRowPageNavLabel(certId, i),
+        preview: findMatchPreview(/** @type {Record<string, unknown>} */ (row), query),
+      })
+    })
+    return found
+  }
 
   function maxPanelWidth() {
     return Math.max(MIN_PANEL_WIDTH, window.innerWidth - VIEWPORT_MARGIN * 2)
@@ -220,29 +307,37 @@ export function mountPublicRelationMap(ctx) {
   function getFabDefaultPosition() {
     const left = window.innerWidth - FAB_SIZE - 16
     const top = window.innerHeight - FAB_SIZE - 16
-    return { left, top }
+    return clampPosition(left, top, FAB_SIZE, FAB_SIZE)
+  }
+
+  function ensureFabPosition() {
+    if (prefs.fabLeft != null && prefs.fabTop != null) return
+    const def = getFabDefaultPosition()
+    prefs.fabLeft = def.left
+    prefs.fabTop = def.top
+    savePrefs({ fabLeft: prefs.fabLeft, fabTop: prefs.fabTop })
   }
 
   function getCurrentRootRect() {
     const rect = root.getBoundingClientRect()
     if (rect.width > 0 && rect.height > 0) return rect
-    if (prefs.left != null && prefs.top != null) {
-      const size = prefs.expanded ? normalizedPanelSize() : { width: FAB_SIZE, height: FAB_SIZE }
+    if (prefs.expanded && prefs.left != null && prefs.top != null) {
+      const { width, height } = normalizedPanelSize()
       return {
         left: prefs.left,
         top: prefs.top,
-        right: prefs.left + size.width,
-        bottom: prefs.top + size.height,
-        width: size.width,
-        height: size.height,
+        right: prefs.left + width,
+        bottom: prefs.top + height,
+        width,
+        height,
       }
     }
-    const def = getFabDefaultPosition()
+    ensureFabPosition()
     return {
-      left: def.left,
-      top: def.top,
-      right: def.left + FAB_SIZE,
-      bottom: def.top + FAB_SIZE,
+      left: prefs.fabLeft,
+      top: prefs.fabTop,
+      right: prefs.fabLeft + FAB_SIZE,
+      bottom: prefs.fabTop + FAB_SIZE,
       width: FAB_SIZE,
       height: FAB_SIZE,
     }
@@ -257,45 +352,61 @@ export function mountPublicRelationMap(ctx) {
     }
   }
 
-  function applyRootPosition(left, top) {
+  function applyRootCoords(left, top) {
     root.style.left = `${left}px`
     root.style.top = `${top}px`
     root.style.right = 'auto'
     root.style.bottom = 'auto'
+  }
+
+  function applyPanelRootPosition(left, top) {
+    applyRootCoords(left, top)
     prefs.left = Math.round(left)
     prefs.top = Math.round(top)
+  }
+
+  function applyFabRootPosition(left, top) {
+    applyRootCoords(left, top)
+    prefs.fabLeft = Math.round(left)
+    prefs.fabTop = Math.round(top)
   }
 
   function clampPanelToViewport() {
     if (!prefs.expanded || !panelEl) return
     applyPanelSize()
     const { width, height } = normalizedPanelSize()
-    const rect = getCurrentRootRect()
-    const next = clampPosition(rect.left, rect.top, width, height)
-    applyRootPosition(next.left, next.top)
+    const left = prefs.left ?? prefs.fabLeft ?? getFabDefaultPosition().left
+    const top = prefs.top ?? prefs.fabTop ?? getFabDefaultPosition().top
+    const next = clampPosition(left, top, width, height)
+    applyPanelRootPosition(next.left, next.top)
   }
 
-  function applyPosition() {
+  function applyFabPosition({ persist = true } = {}) {
+    ensureFabPosition()
+    const next = clampPosition(prefs.fabLeft, prefs.fabTop, FAB_SIZE, FAB_SIZE)
+    applyFabRootPosition(next.left, next.top)
+    if (persist) savePrefs({ fabLeft: prefs.fabLeft, fabTop: prefs.fabTop })
+  }
+
+  function applyPanelPosition() {
     if (prefs.left != null && prefs.top != null) {
-      const width = prefs.expanded ? normalizedPanelSize().width : FAB_SIZE
-      const height = prefs.expanded ? normalizedPanelSize().height : FAB_SIZE
+      const { width, height } = normalizedPanelSize()
       const next = clampPosition(prefs.left, prefs.top, width, height)
-      applyRootPosition(next.left, next.top)
+      applyPanelRootPosition(next.left, next.top)
       return
     }
-    root.style.left = ''
-    root.style.top = ''
-    root.style.right = '16px'
-    root.style.bottom = '16px'
+    anchorExpandFromFab()
   }
 
   function anchorExpandFromFab() {
+    ensureFabPosition()
     const { width, height } = normalizedPanelSize()
-    const fabRect = fabEl?.getBoundingClientRect() ?? getCurrentRootRect()
-    let left = fabRect.right - width
-    let top = fabRect.bottom - height
-    const next = clampPosition(left, top, width, height)
-    applyRootPosition(next.left, next.top)
+    const fabLeft = prefs.fabLeft ?? getFabDefaultPosition().left
+    const fabTop = prefs.fabTop ?? getFabDefaultPosition().top
+    // 面板左上角与悬浮按钮左上角对齐，从按钮位置向右下展开
+    const next = clampPosition(fabLeft, fabTop, width, height)
+    applyPanelRootPosition(next.left, next.top)
+    savePrefs({ left: prefs.left, top: prefs.top })
   }
 
   function playExpandAnimation() {
@@ -311,30 +422,25 @@ export function mountPublicRelationMap(ctx) {
 
   function setExpanded(expanded, { animate = false } = {}) {
     const wasExpanded = prefs.expanded
+
+    if (expanded && !wasExpanded) {
+      applyPanelSize()
+      // 在隐藏悬浮按钮前先按已保存的 fab 坐标定位面板
+      anchorExpandFromFab()
+    }
+
     prefs.expanded = expanded
     root.dataset.expanded = expanded ? 'true' : 'false'
     collapseBtn?.setAttribute('aria-expanded', expanded ? 'true' : 'false')
     savePrefs({ expanded })
 
     if (expanded) {
-      applyPanelSize()
-      if (!wasExpanded) {
-        if (prefs.left == null || prefs.top == null) anchorExpandFromFab()
-        else clampPanelToViewport()
-        applyPosition()
-        if (animate) playExpandAnimation()
-      } else {
-        clampPanelToViewport()
-      }
+      if (wasExpanded) clampPanelToViewport()
+      if (!wasExpanded && animate) playExpandAnimation()
       if ((inputEl?.value ?? '').trim()) void runSearchNow()
       else renderResults()
-    } else if (wasExpanded && panelEl && prefs.left != null && prefs.top != null) {
-      const rect = panelEl.getBoundingClientRect()
-      const next = clampPosition(rect.right - FAB_SIZE, rect.bottom - FAB_SIZE, FAB_SIZE, FAB_SIZE)
-      applyRootPosition(next.left, next.top)
-      savePrefs({ left: prefs.left, top: prefs.top })
     } else {
-      applyPosition()
+      applyFabPosition()
     }
     syncFabBadge()
   }
@@ -378,7 +484,21 @@ export function mountPublicRelationMap(ctx) {
       return
     }
 
-    if (!query) {
+    const certCtx = ctx.getCurrentCertSearchContext()
+    if (isCurrentScope()) {
+      if (!certCtx) {
+        summaryEl.textContent = '请先从左侧选择内容，或切换到全量数据'
+        resultsEl.innerHTML = ''
+        syncFabBadge()
+        return
+      }
+      if (!query) {
+        summaryEl.textContent = `当前页共 ${certCtx.rows.length} 行，输入关键词搜索`
+        resultsEl.innerHTML = ''
+        syncFabBadge()
+        return
+      }
+    } else if (!query) {
       summaryEl.textContent = `共 ${catalogCount} 份内容，输入关键词搜索全部行`
       resultsEl.innerHTML = ''
       syncFabBadge()
@@ -386,22 +506,32 @@ export function mountPublicRelationMap(ctx) {
     }
 
     if (searching) {
-      summaryEl.textContent = `正在搜索全部 ${catalogCount} 份内容…`
+      summaryEl.textContent = isCurrentScope()
+        ? '正在搜索当前页…'
+        : `正在搜索全部 ${catalogCount} 份内容…`
       if (!hits.length) resultsEl.innerHTML = ''
     } else if (!allHits.length) {
-      summaryEl.textContent = `未找到包含「${query}」的行（已搜索 ${catalogCount} 份内容）`
+      summaryEl.textContent = isCurrentScope()
+        ? `未找到包含「${query}」的行（当前页共 ${certCtx?.rows.length ?? 0} 行）`
+        : `未找到包含「${query}」的行（已搜索 ${catalogCount} 份内容）`
       resultsEl.innerHTML = ''
       syncFabBadge()
       return
     } else {
       const truncNote = hitsTruncated ? `，仅显示前 ${MAX_HITS} 条` : ''
-      summaryEl.textContent = `共 ${allHits.length} 行匹配（${catalogCount} 份内容）${truncNote}`
+      summaryEl.textContent = isCurrentScope()
+        ? `共 ${allHits.length} 行匹配（当前页 ${certCtx?.rows.length ?? 0} 行）${truncNote}`
+        : `共 ${allHits.length} 行匹配（${catalogCount} 份内容）${truncNote}`
     }
 
+    const showCertTitle = !isCurrentScope()
     resultsEl.innerHTML = hits.map((hit) => {
       const n = hit.rowIndex + 1
       const active = isHitActive(hit) ? ' is-active' : ''
       const certTitle = escapeHtml(hit.certTitle)
+      const certHtml = showCertTitle
+        ? `<span class="public-relation-map-hit-cert">${certTitle}</span>`
+        : ''
       const pageNav = hit.pageNavLabel
         ? `<span class="public-relation-map-hit-pagenav">${escapeHtml(hit.pageNavLabel)}</span>`
         : ''
@@ -409,7 +539,8 @@ export function mountPublicRelationMap(ctx) {
         ? `<span class="public-relation-map-hit-preview">${escapeHtml(hit.preview)}</span>`
         : ''
       const ariaPageNav = hit.pageNavLabel ? `，${hit.pageNavLabel}` : ''
-      return `<li><button type="button" class="public-relation-map-hit${active}" data-cert-id="${hit.certId}" data-row="${hit.rowIndex}" aria-label="打开 ${certTitle} 第 ${n} 行${ariaPageNav}"><span class="public-relation-map-hit-cert">${certTitle}</span><span class="public-relation-map-hit-num">第 ${n} 行</span>${pageNav}${preview}</button></li>`
+      const ariaCert = showCertTitle ? `${certTitle} ` : ''
+      return `<li><button type="button" class="public-relation-map-hit${active}" data-cert-id="${hit.certId}" data-row="${hit.rowIndex}" aria-label="打开 ${ariaCert}第 ${n} 行${ariaPageNav}">${certHtml}<span class="public-relation-map-hit-num">第 ${n} 行</span>${pageNav}${preview}</button></li>`
     }).join('')
     syncFabBadge()
   }
@@ -446,30 +577,39 @@ export function mountPublicRelationMap(ctx) {
     searching = true
     renderResults()
 
-    const items = ctx.getCatalogItems()
-    const found = /** @type {RelationMapHit[]} */ ([])
+    /** @type {RelationMapHit[]} */
+    let found = []
 
-    for (const item of items) {
-      if (gen !== searchGen) return
-      let rows = []
-      try {
-        rows = await ctx.getCertificateRows(item.id)
-      } catch {
-        continue
+    if (isCurrentScope()) {
+      const certCtx = ctx.getCurrentCertSearchContext()
+      if (!certCtx?.rows?.length) {
+        searching = false
+        allHits = []
+        hits = []
+        hitsTruncated = false
+        renderResults()
+        return
       }
-      const certTitle = String(item.title || '').trim() || '—'
-      rows.forEach((row, i) => {
-        const blob = extractSearchableTextFromRowData(row)
-        if (!searchTextIncludes(blob, query)) return
-        found.push({
-          certId: item.id,
-          certTitle,
-          rowIndex: i,
-          pageNavLabel: ctx.getRowPageNavLabel(item.id, i),
-          preview: findMatchPreview(/** @type {Record<string, unknown>} */ (row), query),
-        })
-      })
-      if (found.length > MAX_HITS) break
+      found = collectHitsFromRows(
+        query,
+        certCtx.rows,
+        certCtx.certId,
+        certCtx.certTitle,
+      )
+    } else {
+      const items = ctx.getCatalogItems()
+      for (const item of items) {
+        if (gen !== searchGen) return
+        let rows = []
+        try {
+          rows = await ctx.getCertificateRows(item.id)
+        } catch {
+          continue
+        }
+        const certTitle = String(item.title || '').trim() || '—'
+        found.push(...collectHitsFromRows(query, rows, item.id, certTitle))
+        if (found.length > MAX_HITS) break
+      }
     }
 
     if (gen !== searchGen) return
@@ -511,6 +651,9 @@ export function mountPublicRelationMap(ctx) {
     e.stopPropagation()
     setExpanded(false)
   })
+
+  scopeCurrentBtn?.addEventListener('click', () => setSearchScope('current'))
+  scopeAllBtn?.addEventListener('click', () => setSearchScope('all'))
 
   inputEl?.addEventListener('input', () => scheduleSearch())
 
@@ -567,14 +710,19 @@ export function mountPublicRelationMap(ctx) {
     if (Math.hypot(dx, dy) > 4) dragMoved = true
     const { width, height } = getDragBoxSize()
     const next = clampPosition(dragOriginLeft + dx, dragOriginTop + dy, width, height)
-    applyRootPosition(next.left, next.top)
+    if (prefs.expanded) applyPanelRootPosition(next.left, next.top)
+    else applyFabRootPosition(next.left, next.top)
   }
 
   const stopDrag = () => {
     if (!dragging) return
     dragging = false
     document.body.classList.remove('public-relation-map-dragging')
-    savePrefs({ left: prefs.left, top: prefs.top })
+    if (prefs.expanded) {
+      savePrefs({ left: prefs.left, top: prefs.top })
+    } else {
+      savePrefs({ fabLeft: prefs.fabLeft, fabTop: prefs.fabTop })
+    }
   }
 
   fabEl?.addEventListener('mousedown', (e) => {
@@ -657,31 +805,44 @@ export function mountPublicRelationMap(ctx) {
 
   window.addEventListener('resize', () => {
     if (!prefs.expanded) {
-      if (prefs.left != null && prefs.top != null) {
-        const next = clampPosition(prefs.left, prefs.top, FAB_SIZE, FAB_SIZE)
-        applyRootPosition(next.left, next.top)
-        savePrefs({ left: prefs.left, top: prefs.top })
-      }
+      applyFabPosition()
       return
     }
     applyPanelSize()
     clampPanelToViewport()
-    savePrefs({ width: prefs.width, height: prefs.height, left: prefs.left, top: prefs.top })
+    savePrefs({
+      width: prefs.width,
+      height: prefs.height,
+      left: prefs.left,
+      top: prefs.top,
+    })
   })
+
+  if (prefs.searchScope === 'current' && !ctx.getCurrentCertSearchContext()) {
+    prefs.searchScope = 'all'
+    savePrefs({ searchScope: 'all' })
+  }
+  syncScopeUi()
 
   applyPanelSize()
   if (prefs.expanded) {
-    applyPosition()
+    applyPanelPosition()
     clampPanelToViewport()
+    savePrefs({ left: prefs.left, top: prefs.top })
     if (prefs.query.trim()) void runSearchNow()
     else renderResults()
   } else {
-    applyPosition()
+    applyFabPosition()
     renderResults()
   }
 
   return {
     refresh() {
+      if (prefs.searchScope === 'current' && !ctx.getCurrentCertSearchContext()) {
+        prefs.searchScope = 'all'
+        savePrefs({ searchScope: 'all' })
+      }
+      syncScopeUi()
       if (!prefs.expanded) return
       if ((inputEl?.value ?? '').trim()) void runSearchNow()
       else renderResults()

@@ -2071,6 +2071,7 @@ function resetPublicViewerToSelectPrompt(message) {
     textContent: prompt,
   }))
   renderTable()
+  relationMap?.refresh()
   applyPublicPreviewFullscreenState()
 }
 
@@ -2229,6 +2230,7 @@ async function loadCertificate(id) {
 
   titleEl.textContent = certificate.title
   renderTable()
+  relationMap?.refresh()
 
   void loadSiteConfigForGroup(groupId).then((cfg) => {
     if (gen !== loadGeneration) return
@@ -2390,9 +2392,23 @@ function ensureRelationMap() {
   relationMap = mountPublicRelationMap({
     getCatalogItems: () => catalog.map((c) => ({ id: c.id, title: c.title })),
     getCertificateRows: loadPublicCertRowsForSearch,
-    getRowPageNavLabel: getPageNavRowLabelForCachedCert,
+    getRowPageNavLabel: (certId, rowIndex) => {
+      if (currentCert?.id === certId) {
+        return getPageNavRowLabelForCertificate(currentCert, rowIndex)
+      }
+      return getPageNavRowLabelForCachedCert(certId, rowIndex)
+    },
     getCurrentCertId: () => currentCert?.id ?? null,
     getSelectedRow: () => selectedRow,
+    getCurrentCertSearchContext: () => {
+      if (!currentCert?.id) return null
+      const rows = getRows()
+      return {
+        certId: currentCert.id,
+        certTitle: String(currentCert.title || '').trim() || '—',
+        rows,
+      }
+    },
     onJumpToHit: jumpRelationMapHit,
   })
   return relationMap
