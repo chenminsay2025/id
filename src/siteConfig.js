@@ -165,9 +165,9 @@ export function applyDocumentTitle(pageSuffix) {
 /** 公众浏览页：标题、侧栏与搜索占位等 */
 export function applyPublicPageBranding(cfg) {
   const c = cfg || getSiteConfig()
-  applyDocumentTitle(siteText('publishedEntity', c))
+  applyDocumentTitle()
   const listTitle = document.getElementById('public-list-title')
-  if (listTitle) listTitle.textContent = siteText('publishedEntity', c)
+  if (listTitle) listTitle.textContent = entityLabel(c)
   const sidebarBrand = document.getElementById('public-sidebar-brand')
   if (sidebarBrand) {
     const mark = String(c.brandMark || '').trim()

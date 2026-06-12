@@ -5,7 +5,7 @@
     <link rel="icon" href="/favicon.ico" sizes="any" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>已发布内容</title>
+    <title>证书</title>
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body class="public-page">
@@ -16,8 +16,10 @@
       <aside class="public-list-panel" id="public-list-panel">
         <header class="public-header">
           <div class="public-header-row">
-            <span class="public-sidebar-brand" id="public-sidebar-brand" aria-hidden="true">猫</span>
-            <h1 id="public-list-title">已发布内容</h1>
+            <div class="public-sidebar-head">
+              <span class="public-sidebar-brand" id="public-sidebar-brand" aria-hidden="true">猫</span>
+              <h1 id="public-list-title">证书</h1>
+            </div>
             <button
               type="button"
               class="public-sidebar-collapse-btn"
@@ -66,6 +68,11 @@
               <div class="public-main-head-row">
                 <h2 id="public-cert-title">请选择内容</h2>
                 <div class="public-main-head-tools">
+                  <div class="public-preview-mode-bar public-preview-mode-bar--toolbar" role="group" aria-label="预览显示模式">
+                    <button type="button" class="public-preview-mode-btn is-active" data-preview-mode="single" title="单页显示">单页</button>
+                    <button type="button" class="public-preview-mode-btn" data-preview-mode="multi-h" title="多页横向排列">横排</button>
+                    <button type="button" class="public-preview-mode-btn" data-preview-mode="multi-v" title="多页纵向排列">竖排</button>
+                  </div>
                   <button
                     type="button"
                     class="btn btn-sm public-relation-map-toggle-btn"
@@ -122,10 +129,34 @@
                   <section class="public-settings-section">
                     <h4 class="public-settings-section-title">导出</h4>
                     <div class="public-export-controls">
-                      <button type="button" class="btn btn-sm" id="public-export-svg" disabled>导出 SVG</button>
-                      <button type="button" class="btn btn-sm btn-primary" id="public-export-pdf" disabled>导出 PDF</button>
-                      <button type="button" class="btn btn-sm btn-primary" id="public-export-batch" disabled>导出合并多页 PDF</button>
-                      <button type="button" class="btn btn-sm btn-primary" id="public-export-batch-split" disabled>导出 PDF 每页独立文件</button>
+                      <div class="public-export-menu">
+                        <button
+                          type="button"
+                          class="btn btn-sm btn-primary public-export-menu-btn"
+                          id="public-export-toggle"
+                          disabled
+                          aria-haspopup="menu"
+                          aria-expanded="false"
+                        >导出 ▾</button>
+                        <div class="public-export-menu-popover" id="public-export-popover" role="menu" hidden>
+                          <button type="button" class="public-export-menu-item" data-export-mode="svg" role="menuitem">
+                            <span class="public-export-menu-item-title">导出 SVG</span>
+                            <span class="public-export-menu-item-desc">当前预览页，矢量图格式</span>
+                          </button>
+                          <button type="button" class="public-export-menu-item" data-export-mode="pdf" role="menuitem">
+                            <span class="public-export-menu-item-title">导出 PDF</span>
+                            <span class="public-export-menu-item-desc">当前预览页，单页 PDF 文件</span>
+                          </button>
+                          <button type="button" class="public-export-menu-item" data-export-mode="batch" role="menuitem">
+                            <span class="public-export-menu-item-title">合并多页 PDF</span>
+                            <span class="public-export-menu-item-desc">全部页合并为一个 PDF 文件</span>
+                          </button>
+                          <button type="button" class="public-export-menu-item" data-export-mode="batch-split" role="menuitem">
+                            <span class="public-export-menu-item-title">每页独立 PDF</span>
+                            <span class="public-export-menu-item-desc">全部页各生成 PDF，打包为 ZIP</span>
+                          </button>
+                        </div>
+                      </div>
                       <span class="public-export-status" id="public-export-status"></span>
                     </div>
                   </section>
@@ -140,6 +171,14 @@
                         <input type="checkbox" id="public-show-template-layer" checked />
                         <span>模板底图</span>
                       </label>
+                    </div>
+                  </section>
+                  <section class="public-settings-section public-settings-section--preview-only">
+                    <h4 class="public-settings-section-title">显示模式</h4>
+                    <div class="public-preview-mode-bar public-preview-mode-bar--settings" role="group" aria-label="预览显示模式">
+                      <button type="button" class="public-preview-mode-btn is-active" data-preview-mode="single" title="单页显示">单页</button>
+                      <button type="button" class="public-preview-mode-btn" data-preview-mode="multi-h" title="多页横向排列">横排</button>
+                      <button type="button" class="public-preview-mode-btn" data-preview-mode="multi-v" title="多页纵向排列">竖排</button>
                     </div>
                   </section>
                   <section class="public-settings-section public-settings-section--preview-only">
@@ -175,18 +214,18 @@
                     title="设置页码栏显示列"
                   >显示项</button>
                 </div>
-                <button type="button" class="public-page-nav-btn public-page-nav-btn--prev" id="public-prev" disabled aria-label="上一页" title="上一页">
-                  <span class="public-page-nav-icon" aria-hidden="true">‹</span>
-                  <span class="public-page-nav-label">上一页</span>
-                </button>
+                <div class="public-page-nav-pager">
+                  <button type="button" class="public-page-nav-btn public-page-nav-btn--prev" id="public-prev" disabled aria-label="上一页" title="上一页">
+                    <svg class="public-page-nav-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+                  </button>
+                  <button type="button" class="public-page-nav-btn public-page-nav-btn--next" id="public-next" disabled aria-label="下一页" title="下一页">
+                    <svg class="public-page-nav-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M8.59 16.59 13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+                  </button>
+                </div>
                 <div class="public-page-nav-mobile-summary" aria-live="polite" aria-atomic="true">
                   <span id="public-page-current" class="public-page-current-num">-</span><span class="public-page-current-sep">/</span><span id="public-page-total" class="public-page-total-num">-</span>
                 </div>
                 <div id="public-page-index" class="public-page-nav-index public-page-nav-index--sidebar" role="navigation" aria-label="页码" aria-live="polite">- / -</div>
-                <button type="button" class="public-page-nav-btn public-page-nav-btn--next" id="public-next" disabled aria-label="下一页" title="下一页">
-                  <span class="public-page-nav-label">下一页</span>
-                  <span class="public-page-nav-icon" aria-hidden="true">›</span>
-                </button>
               </nav>
               <div
                 id="public-page-nav-settings-panel"
@@ -239,7 +278,7 @@
       </main>
     </div>
     <div id="public-export-progress" class="public-export-progress" hidden aria-live="polite" aria-busy="false">
-      <div class="public-export-progress-card" role="status">
+      <div class="public-export-progress-card" role="dialog" aria-modal="true" aria-labelledby="public-export-progress-title">
         <div class="public-export-progress-head">
           <strong id="public-export-progress-title" class="public-export-progress-title">正在导出 PDF</strong>
           <span id="public-export-progress-pct" class="public-export-progress-pct">0%</span>
@@ -251,6 +290,10 @@
         <p id="public-export-progress-detail" class="public-export-progress-detail">准备中…</p>
         <p id="public-export-progress-page" class="public-export-progress-page" hidden></p>
         <ol id="public-export-progress-steps" class="public-export-progress-steps"></ol>
+        <footer class="public-export-progress-footer">
+          <p class="public-export-progress-hint">导出完成后可在此查看详情，请点击关闭。</p>
+          <button type="button" class="btn btn-sm btn-primary" id="public-export-progress-close">关闭</button>
+        </footer>
       </div>
     </div>
     <script type="module" src="/src/public/main.js"></script>

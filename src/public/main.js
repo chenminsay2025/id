@@ -42,6 +42,11 @@ import {
   warnPublicAdornCritical,
 } from './publicAdornDebug.js'
 import { mountPreviewViewport } from '../previewViewport.js'
+import {
+  buildMultiPageLayoutMeta,
+  expandPageIndicesWithBuffer,
+} from '../multiPageVirtual.js'
+import { previewStageDimensionsForPage } from '../templateBackground.js'
 import { mountLayoutEditor } from '../layoutEditor.js'
 import { mountSpreadsheetTable } from '../spreadsheetTable.js'
 import { EMPTY_SVG_TEMPLATE } from '../svgTemplateLoader.js'
@@ -118,10 +123,10 @@ const exportProgressDetail = document.getElementById('public-export-progress-det
 const exportProgressPage = document.getElementById('public-export-progress-page')
 const exportProgressTime = document.getElementById('public-export-progress-time')
 const exportProgressSteps = document.getElementById('public-export-progress-steps')
-const btnExportSvg = document.getElementById('public-export-svg')
-const btnExportPdf = document.getElementById('public-export-pdf')
-const btnExportBatch = document.getElementById('public-export-batch')
-const btnExportBatchSplit = document.getElementById('public-export-batch-split')
+const btnExportToggle = document.getElementById('public-export-toggle')
+const exportMenuPopover = document.getElementById('public-export-popover')
+const exportMenuItems = document.querySelectorAll('[data-export-mode]')
+const exportProgressCloseBtn = document.getElementById('public-export-progress-close')
 const menuToggle = document.getElementById('public-menu-toggle')
 const menuBackdrop = document.getElementById('public-menu-backdrop')
 const settingsToggle = document.getElementById('public-settings-toggle')
@@ -131,6 +136,18 @@ const settingsClose = document.getElementById('public-settings-close')
 const listPanel = document.getElementById('public-list-panel')
 const sidebarCollapseBtn = document.getElementById('public-sidebar-collapse')
 const SIDEBAR_COLLAPSED_KEY = 'cat.public.sidebarCollapsed'
+const PREVIEW_DISPLAY_MODE_KEY = 'cat.public.previewDisplayMode'
+const PREVIEW_PAGE_GAP = 16
+/** @type {'single' | 'multi-h' | 'multi-v'} */
+let previewDisplayMode = (() => {
+  try {
+    const saved = localStorage.getItem(PREVIEW_DISPLAY_MODE_KEY)
+    if (saved === 'multi-h' || saved === 'multi-v' || saved === 'single') return saved
+  } catch {
+    // ignore
+  }
+  return 'single'
+})()
 const showLayoutBoxesInput = document.getElementById('public-show-layout-boxes')
 const showTemplateLayerInput = document.getElementById('public-show-template-layer')
 
@@ -176,6 +193,39 @@ let certLoadRunner = false
 let preloadTimer = 0
 /** @type {Map<string, SVGSVGElement>} */
 const rowSvgCache = new Map()
+let multiPreviewStale = true
+/** @type {number} */
+let multiPageVirtualSyncRaf = 0
+/** @type {number} */
+let multiPageNavMountRaf = 0
+/** @type {ReturnType<typeof setTimeout> | 0} */
+let viewportHeavySyncTimer = 0
+const PREVIEW_SVG_REVEAL_MS = 520
+const PREVIEW_CELL_REVEAL_MS = 640
+/** @type {ReturnType<typeof setTimeout> | 0} */
+let previewSvgRevealTimer = 0
+let pendingPreviewSvgReveal = false
+let multiPageVirtualSyncPending = false
+let multiPageMountPaused = false
+/** @type {number} */
+let multiPageScrollJumpGen = 0
+let multiPageAllowCellReveal = false
+/** @type {ReturnType<typeof setTimeout> | 0} */
+let viewportPageSelectTimer = 0
+/** @type {number | null} */
+let viewportPageSelectPending = null
+
+/** @type {import('../multiPageVirtual.js').MultiPageLayoutMeta | null} */
+let multiPageLayoutMeta = null
+/** @type {number} */
+let multiPageSvgIdleHandle = 0
+const MULTI_PAGE_WINDOW_BUFFER = 1
+
+function invalidatePreviewCache() {
+  multiPreviewStale = true
+  rowSvgCache.clear()
+  clearMultiPagePreviewLayout()
+}
 /** @type {Map<number, string>} */
 const publicTemplateSvgCache = new Map()
 /** @type {Map<number, Promise<string>>} */
@@ -200,7 +250,7 @@ let presetCustomSamples = {}
 const previewViewport = mountPreviewViewport(previewArea, {
   enableTouchGestures: true,
   enablePageSwipe() {
-    return !isPublicMobileLandscapeLayout()
+    return previewDisplayMode === 'single' && !isPublicMobileLandscapeLayout()
   },
   canSwipePage(dir) {
     const rows = getRows()
@@ -218,6 +268,35 @@ const previewViewport = mountPreviewViewport(previewArea, {
   },
   onScaleChange(scale) {
     if (zoomValueEl) zoomValueEl.textContent = `${Math.round(scale * 100)}%`
+  },
+  onViewChange() {
+    if (!isMultiPagePreviewMode()) return
+    if (previewViewport.isNavigationActive?.() && !previewViewport.isPageScrollAnimating?.()) {
+      scheduleMultiPageNavMountSync()
+      return
+    }
+    scheduleMultiPageVirtualSync()
+  },
+  onVisiblePageChange(pageIndex) {
+    if (!isMultiPagePreviewMode()) return
+    if (previewViewport.isNavigationActive?.() && !previewViewport.isPageScrollAnimating?.()) {
+      scheduleViewportPageSelectDuringNav(pageIndex)
+      scheduleMultiPageNavMountSync()
+      return
+    }
+    setSelectedRowFromViewport(pageIndex)
+    scheduleMultiPageVirtualSync()
+  },
+  onNavigationActiveChange(active) {
+    if (!isMultiPagePreviewMode()) return
+    multiPageMountPaused = active
+    if (active) {
+      multiPageAllowCellReveal = false
+      cancelMultiPageCellRevealAnimations()
+      return
+    }
+    flushViewportPageSelectAfterNav()
+    flushMultiPageVirtualSync()
   },
 })
 
@@ -287,14 +366,98 @@ function preloadCertificateTemplateSvgs(certificate, { prioritizeId = null } = {
   }
 }
 
+function schedulePreviewSvgReveal(force = false) {
+  if (!previewArea) return
+  if (!force && !pendingPreviewSvgReveal) return
+  pendingPreviewSvgReveal = false
+  previewArea.classList.add('public-preview-area--reveal-pending')
+  requestAnimationFrame(() => {
+    previewArea.classList.add('public-preview-area--reveal')
+    if (previewSvgRevealTimer) clearTimeout(previewSvgRevealTimer)
+    previewSvgRevealTimer = setTimeout(() => {
+      previewSvgRevealTimer = 0
+      previewArea.classList.remove('public-preview-area--reveal', 'public-preview-area--reveal-pending')
+    }, PREVIEW_SVG_REVEAL_MS)
+  })
+}
+
+function playCellSvgReveal(cell, staggerMs = 0) {
+  if (!cell) return
+  if (cell.classList.contains('preview-page-cell--reveal')
+    || cell.classList.contains('preview-page-cell--reveal-pending')) return
+  cell.classList.add('preview-page-cell--reveal-pending')
+  if (staggerMs > 0) cell.style.setProperty('--preview-cell-reveal-delay', `${staggerMs}ms`)
+  requestAnimationFrame(() => {
+    cell.classList.add('preview-page-cell--reveal')
+    const cleanup = () => {
+      cell.classList.remove('preview-page-cell--reveal', 'preview-page-cell--reveal-pending')
+      cell.style.removeProperty('--preview-cell-reveal-delay')
+    }
+    const svg = cell.querySelector('svg')
+    if (svg) {
+      svg.addEventListener('animationend', (e) => {
+        if (e.target === svg) cleanup()
+      }, { once: true })
+    }
+    setTimeout(cleanup, PREVIEW_CELL_REVEAL_MS + (staggerMs || 0) + 80)
+  })
+}
+
+function shouldAnimateMultiPageCellMount() {
+  if (!multiPageAllowCellReveal) return false
+  if (!previewArea) return false
+  if (previewArea.classList.contains('public-preview-area--loading')) return false
+  if (previewArea.classList.contains('public-preview-area--reveal-pending')) return false
+  if (previewArea.classList.contains('public-preview-area--reveal')) return false
+  if (pendingPreviewSvgReveal) return false
+  return true
+}
+
+function cancelMultiPageCellRevealAnimations() {
+  getStage()?.querySelectorAll('.preview-page-cell').forEach((cell) => {
+    cell.classList.remove('preview-page-cell--reveal', 'preview-page-cell--reveal-pending')
+    cell.style.removeProperty('--preview-cell-reveal-delay')
+  })
+}
+
+function scheduleViewportPageSelectDuringNav(pageIndex) {
+  viewportPageSelectPending = pageIndex
+  if (viewportPageSelectTimer) return
+  viewportPageSelectTimer = setTimeout(() => {
+    viewportPageSelectTimer = 0
+    const idx = viewportPageSelectPending
+    viewportPageSelectPending = null
+    if (idx != null && previewViewport.isNavigationActive?.()) {
+      setSelectedRowFromViewport(idx)
+    }
+  }, 140)
+}
+
+function flushViewportPageSelectAfterNav() {
+  if (viewportPageSelectTimer) {
+    clearTimeout(viewportPageSelectTimer)
+    viewportPageSelectTimer = 0
+  }
+  viewportPageSelectPending = null
+  const visible = previewViewport.getVisiblePageIndex?.()
+  if (visible != null) setSelectedRowFromViewport(visible)
+}
+
 function setPreviewLoadingMessage(msg) {
   if (!previewArea) return
   let el = previewArea.querySelector('.public-preview-loading')
   if (!msg) {
+    const wasLoading = previewArea.classList.contains('public-preview-area--loading')
     el?.remove()
     previewArea.classList.remove('public-preview-area--loading')
+    if (wasLoading) {
+      pendingPreviewSvgReveal = true
+      previewArea.classList.add('public-preview-area--reveal-pending')
+    }
     return
   }
+  pendingPreviewSvgReveal = false
+  previewArea.classList.remove('public-preview-area--reveal', 'public-preview-area--reveal-pending')
   previewArea.classList.add('public-preview-area--loading')
   if (!el) {
     el = document.createElement('p')
@@ -318,7 +481,7 @@ async function warmupCatalogFonts(catalog) {
       previewFontReady = true
       if (currentCert?.rows?.length) {
         previewDisplayedRow = -1
-        rowSvgCache.clear()
+        invalidatePreviewCache()
         scheduleSelectRow(selectedRow, { keepColumn: true })
       }
     } catch (err) {
@@ -405,7 +568,7 @@ function scheduleSelectRow(rowIndex, options = {}, onSettled) {
     selectedCol = ci >= 0 ? ci : -1
     if (ci < 0) selectedColumnName = ''
   }
-  syncRowSelectionUi({ keepColumn })
+  syncRowSelectionUi({ keepColumn, smoothPreviewScroll: options.smoothPreviewScroll })
 
   void finishSelectRow(idx, gen, options, onSettled)
 }
@@ -413,12 +576,46 @@ function scheduleSelectRow(rowIndex, options = {}, onSettled) {
 /** 异步渲染预览：缓存命中立即显示；连续切换时旧任务通过 generation + shouldAbort 取消 */
 async function finishSelectRow(idx, gen, _options, onSettled) {
   try {
+    if (isMultiPagePreviewMode()) {
+      const stage = getStage()
+      const expectedClass = previewDisplayMode === 'multi-h'
+        ? 'preview-stage--pages-h'
+        : 'preview-stage--pages-v'
+      const canReuse = !multiPreviewStale
+        && stage?.classList.contains(expectedClass)
+        && (stage.classList.contains('preview-stage--virtual')
+          ? Number(stage.dataset.pageCount) === getRows().length
+          : stage.querySelectorAll('.preview-page-cell').length === getRows().length)
+      if (canReuse && gen === switchGeneration) {
+        syncMultiPageActiveCell({ scrollIntoView: false })
+        previewDisplayedRow = idx
+        if (isMultiPageVirtualStage()) {
+          syncMultiPageDomWindow({ mountSvg: false })
+        }
+        if (!_options.smoothPreviewScroll) {
+          void ensureVisiblePagesMounted(gen)
+        }
+        return
+      }
+      await renderMultiPagePreview(gen)
+      if (gen === switchGeneration) {
+        multiPreviewStale = false
+        syncMultiPageActiveCell()
+      }
+      return
+    }
+
     const cacheKey = rowCacheKey(idx)
 
     if (rowSvgCache.has(cacheKey)) {
       if (gen === switchGeneration) {
-        setPreviewLoadingMessage('')
         showSvgInStage(rowSvgCache.get(cacheKey).cloneNode(true))
+        if (previewFitPending) {
+          previewViewport.fitView?.()
+          previewFitPending = false
+        }
+        setPreviewLoadingMessage('')
+        schedulePreviewSvgReveal()
         previewDisplayedRow = idx
         schedulePreloadAdjacent(idx, gen)
       }
@@ -430,9 +627,14 @@ async function finishSelectRow(idx, gen, _options, onSettled) {
     const svgEl = await buildSvgForRow(idx, gen)
     if (gen !== switchGeneration || !svgEl) return
 
-    setPreviewLoadingMessage('')
     rowSvgCache.set(cacheKey, svgEl.cloneNode(true))
     showSvgInStage(svgEl)
+    if (previewFitPending) {
+      previewViewport.fitView?.()
+      previewFitPending = false
+    }
+    setPreviewLoadingMessage('')
+    schedulePreviewSvgReveal()
     previewDisplayedRow = idx
     schedulePreloadAdjacent(idx, gen)
   } catch (err) {
@@ -566,7 +768,13 @@ function applyRenderContextForRow(rowIndex) {
 }
 
 function getActiveSvg() {
-  return getStage()?.querySelector('svg') ?? null
+  const stage = getStage()
+  if (!stage) return null
+  if (isMultiPagePreviewMode()) {
+    return stage.querySelector(`.preview-page-cell[data-page-index="${selectedRow}"] svg`)
+      ?? stage.querySelector('svg')
+  }
+  return stage.querySelector('svg') ?? null
 }
 
 function syncSvgHighlight() {
@@ -598,11 +806,569 @@ function clearPublicSelection() {
   renderPublicRowCard()
 }
 
+function isMultiPagePreviewMode() {
+  return previewDisplayMode === 'multi-h' || previewDisplayMode === 'multi-v'
+}
+
+function updatePreviewModeUi() {
+  document.querySelectorAll('.public-preview-mode-btn').forEach((btn) => {
+    btn.classList.toggle('is-active', btn.dataset.previewMode === previewDisplayMode)
+  })
+  previewArea?.classList.toggle('preview-area--multi-page', isMultiPagePreviewMode())
+  previewViewport.setNavigationMode?.(
+    previewDisplayMode === 'single' ? 'single' : previewDisplayMode,
+  )
+}
+
+function clearMultiPagePreviewLayout() {
+  multiPageLayoutMeta = null
+  previewViewport.setPageLayoutGetter?.(null)
+}
+
+/** @returns {boolean} 是否刚从多页 stage 还原 */
+function resetStageFromMultiPage(stage) {
+  if (!stage) return false
+  const wasMulti = stage.classList.contains('preview-stage--pages-h')
+    || stage.classList.contains('preview-stage--pages-v')
+    || stage.classList.contains('preview-stage--virtual')
+  if (!wasMulti) return false
+  stage.className = 'preview-stage'
+  stage.removeAttribute('style')
+  delete stage.dataset.pageGap
+  delete stage.dataset.pageCount
+  return true
+}
+
+function setPreviewDisplayMode(mode) {
+  if (mode !== 'single' && mode !== 'multi-h' && mode !== 'multi-v') return
+  if (previewDisplayMode === mode) return
+  previewDisplayMode = mode
+  cancelMultiPageBackgroundWork()
+  if (mode === 'single') {
+    clearMultiPagePreviewLayout()
+    previewFitPending = true
+  }
+  try {
+    localStorage.setItem(PREVIEW_DISPLAY_MODE_KEY, mode)
+  } catch {
+    // ignore
+  }
+  updatePreviewModeUi()
+  previewDisplayedRow = -1
+  if (currentCert?.rows?.length) {
+    scheduleSelectRow(selectedRow, { keepColumn: true })
+  }
+}
+
+function computeMultiPageBounds(cellsMeta, gap, mode) {
+  if (!cellsMeta.length) {
+    const dims = previewStageDimensionsForPage(pageWidthMm, pageHeightMm)
+    return { width: dims.width, height: dims.height }
+  }
+  if (mode === 'multi-h') {
+    let width = 0
+    let height = 0
+    cellsMeta.forEach((cell, index) => {
+      width += cell.pageW
+      if (index > 0) width += gap
+      height = Math.max(height, cell.pageH)
+    })
+    return { width, height }
+  }
+  let width = 0
+  let height = 0
+  cellsMeta.forEach((cell, index) => {
+    height += cell.pageH
+    if (index > 0) height += gap
+    width = Math.max(width, cell.pageW)
+  })
+  return { width, height }
+}
+
+function createMultiPageCellPlaceholder(pageIndex) {
+  const ph = document.createElement('div')
+  ph.className = 'preview-page-cell-placeholder'
+  ph.setAttribute('aria-hidden', 'true')
+  ph.innerHTML = (
+    '<div class="preview-page-cell-outline"></div>'
+    + `<span class="preview-page-cell-label">第 ${pageIndex + 1} 页</span>`
+  )
+  return ph
+}
+
+function mountMultiPageCellSvg(cell, pageIndex, { animate = false, staggerMs = 0 } = {}) {
+  if (cell.querySelector('svg')) {
+    cell.classList.add('preview-page-cell--mounted')
+    return true
+  }
+  const key = rowCacheKey(pageIndex)
+  if (!rowSvgCache.has(key)) return false
+  cell.appendChild(rowSvgCache.get(key).cloneNode(true))
+  cell.classList.add('preview-page-cell--mounted')
+  cell.classList.remove('preview-page-cell--loading')
+  const doAnimate = animate === true || shouldAnimateMultiPageCellMount()
+  if (doAnimate) playCellSvgReveal(cell, staggerMs)
+  return true
+}
+
+function unmountMultiPageCellSvg(cell) {
+  const svg = cell.querySelector('svg')
+  if (svg) svg.remove()
+  cell.classList.remove(
+    'preview-page-cell--mounted',
+    'preview-page-cell--loading',
+    'preview-page-cell--reveal',
+    'preview-page-cell--reveal-pending',
+  )
+  cell.style.removeProperty('--preview-cell-reveal-delay')
+}
+
+function getMultiPageVisibleIndices(fallbackIndex = selectedRow) {
+  const visible = previewViewport.getVisiblePageIndices?.() ?? []
+  if (visible.length) return visible
+  const rows = getRows()
+  if (!rows.length) return []
+  const idx = Math.max(0, Math.min(fallbackIndex, rows.length - 1))
+  return [idx]
+}
+
+function isMultiPageVirtualStage() {
+  return getStage()?.classList.contains('preview-stage--virtual') === true
+}
+
+/**
+ * 虚拟窗口：仅保留视口附近少量 cell DOM，SVG 在空闲时异步挂载。
+ * @param {{ mountSvg?: boolean }} [options]
+ */
+function syncMultiPageDomWindow(options = {}) {
+  const stage = getStage()
+  if (!stage || !multiPageLayoutMeta || !isMultiPageVirtualStage()) return
+
+  const visible = previewViewport.getVisiblePageIndices?.() ?? []
+  const windowIndices = expandPageIndicesWithBuffer(
+    visible.length ? visible : [selectedRow],
+    multiPageLayoutMeta.count,
+    MULTI_PAGE_WINDOW_BUFFER,
+  )
+  const needed = new Set(windowIndices)
+
+  stage.querySelectorAll('.preview-page-cell').forEach((cell) => {
+    const pageIndex = Number(cell.dataset.pageIndex)
+    if (!needed.has(pageIndex)) {
+      unmountMultiPageCellSvg(cell)
+      cell.remove()
+    }
+  })
+
+  for (const pageIndex of windowIndices) {
+    let cell = stage.querySelector(`.preview-page-cell[data-page-index="${pageIndex}"]`)
+    if (!cell) {
+      const meta = multiPageLayoutMeta.cells[pageIndex]
+      if (!meta) continue
+      cell = document.createElement('div')
+      cell.className = 'preview-page-cell'
+      cell.dataset.pageIndex = String(pageIndex)
+      cell.dataset.pageW = String(meta.pageW)
+      cell.dataset.pageH = String(meta.pageH)
+      cell.appendChild(createMultiPageCellPlaceholder(pageIndex))
+      stage.appendChild(cell)
+    }
+    cell.classList.toggle('is-active', pageIndex === selectedRow)
+  }
+
+  previewViewport.refreshContentSize?.()
+
+  if (options.mountSvg && !previewViewport.isNavigationActive?.() && !isMultiPagePageScrollBusy()) {
+    scheduleMultiPageSvgIdleMount()
+  }
+}
+
+async function mountMultiPageWindowSvgs(gen, maxBuilds = 1) {
+  if (!isMultiPageVirtualStage() || !multiPageLayoutMeta || gen !== switchGeneration) return
+  if (previewViewport.isNavigationActive?.() || isMultiPagePageScrollBusy()) return
+
+  const visible = previewViewport.getVisiblePageIndices?.() ?? []
+  const windowIndices = expandPageIndicesWithBuffer(
+    visible.length ? visible : [selectedRow],
+    multiPageLayoutMeta.count,
+    MULTI_PAGE_WINDOW_BUFFER,
+  )
+  const primary = previewViewport.getVisiblePageIndex?.()
+  let built = 0
+
+  for (const pageIndex of windowIndices) {
+    if (gen !== switchGeneration) return
+    if (previewViewport.isNavigationActive?.() || isMultiPagePageScrollBusy()) return
+    const cell = getStage()?.querySelector(`.preview-page-cell[data-page-index="${pageIndex}"]`)
+    if (!cell || cell.querySelector('svg')) continue
+    const key = rowCacheKey(pageIndex)
+    if (rowSvgCache.has(key)) {
+      mountMultiPageCellSvg(cell, pageIndex, { animate: false })
+      continue
+    }
+    if (pageIndex !== primary || built >= maxBuilds) continue
+    cell.classList.add('preview-page-cell--loading')
+    const svg = await buildSvgForRow(pageIndex, gen)
+    cell.classList.remove('preview-page-cell--loading')
+    if (gen !== switchGeneration || !svg) continue
+    rowSvgCache.set(key, svg.cloneNode(true))
+    if (!previewViewport.isNavigationActive?.() && !isMultiPagePageScrollBusy()) {
+      mountMultiPageCellSvg(cell, pageIndex, { animate: false })
+    }
+    built += 1
+  }
+
+  if (built < maxBuilds && gen === switchGeneration && !previewViewport.isNavigationActive?.()) {
+    const stillMissing = windowIndices.some((pageIndex) => {
+      const cell = getStage()?.querySelector(`.preview-page-cell[data-page-index="${pageIndex}"]`)
+      return cell && !cell.querySelector('svg')
+    })
+    if (stillMissing) scheduleMultiPageSvgIdleMount()
+  }
+}
+
+function scheduleMultiPageSvgIdleMount() {
+  if (!isMultiPageVirtualStage()) return
+  if (typeof requestIdleCallback === 'undefined') {
+    void mountMultiPageWindowSvgs(switchGeneration, 2)
+    return
+  }
+  if (multiPageSvgIdleHandle) cancelIdleCallback(multiPageSvgIdleHandle)
+  multiPageSvgIdleHandle = requestIdleCallback(() => {
+    multiPageSvgIdleHandle = 0
+    void mountMultiPageWindowSvgs(switchGeneration, 1)
+  }, { timeout: 300 })
+}
+
+function scheduleMultiPageDomWindowSync(mountSvg = false) {
+  if (!isMultiPagePreviewMode() || !isMultiPageVirtualStage()) return
+  if (previewViewport.isPageScrollAnimating?.()) return
+  if (multiPageNavMountRaf) return
+  multiPageNavMountRaf = requestAnimationFrame(() => {
+    multiPageNavMountRaf = 0
+    syncMultiPageDomWindow({ mountSvg })
+  })
+}
+
+function scheduleMultiPageNavMountSync() {
+  scheduleMultiPageDomWindowSync(false)
+}
+
+function syncMultiPageVirtualDom(fallbackIndex = selectedRow) {
+  if (isMultiPageVirtualStage()) {
+    syncMultiPageDomWindow({ mountSvg: !previewViewport.isNavigationActive?.() })
+    return
+  }
+  const stage = getStage()
+  if (!stage || !isMultiPagePreviewMode()) return
+  if (isMultiPagePageScrollBusy()) {
+    multiPageVirtualSyncPending = true
+    return
+  }
+  const visibleSet = new Set(getMultiPageVisibleIndices(fallbackIndex))
+  let changed = false
+
+  stage.querySelectorAll('.preview-page-cell').forEach((cell) => {
+    const pageIndex = Number(cell.dataset.pageIndex)
+    if (!Number.isFinite(pageIndex)) return
+    const shouldMount = visibleSet.has(pageIndex)
+    const hasSvg = !!cell.querySelector('svg')
+    if (!shouldMount && hasSvg) {
+      unmountMultiPageCellSvg(cell)
+      changed = true
+    } else if (shouldMount && !hasSvg) {
+      if (mountMultiPageCellSvg(cell, pageIndex, { animate: false })) changed = true
+    }
+  })
+  if (changed) previewViewport.refreshContentSize?.()
+}
+
+function isMultiPagePageScrollBusy() {
+  return previewViewport.isPageScrollAnimating?.() === true
+}
+
+function isMultiPageNavBusy() {
+  return isMultiPagePageScrollBusy()
+}
+
+function runMultiPageVirtualSync() {
+  if (multiPageVirtualSyncRaf) cancelAnimationFrame(multiPageVirtualSyncRaf)
+  multiPageVirtualSyncRaf = requestAnimationFrame(() => {
+    multiPageVirtualSyncRaf = 0
+    if (isMultiPageVirtualStage()) {
+      syncMultiPageDomWindow({ mountSvg: !previewViewport.isNavigationActive?.() })
+    } else {
+      syncMultiPageVirtualDom()
+      void ensureVisiblePagesMounted(switchGeneration)
+    }
+  })
+}
+
+function flushMultiPageVirtualSync() {
+  multiPageVirtualSyncPending = false
+  if (isMultiPagePageScrollBusy()) return
+  runMultiPageVirtualSync()
+}
+
+function scheduleMultiPageVirtualSync(options = {}) {
+  if (!isMultiPagePreviewMode()) return
+  if (previewViewport.isNavigationActive?.() && !previewViewport.isPageScrollAnimating?.()) {
+    scheduleMultiPageNavMountSync()
+    return
+  }
+  if (options.immediate) {
+    multiPageVirtualSyncPending = false
+    if (isMultiPagePageScrollBusy()) return
+    runMultiPageVirtualSync()
+    return
+  }
+  if (isMultiPagePageScrollBusy()) {
+    multiPageVirtualSyncPending = true
+    return
+  }
+  multiPageVirtualSyncPending = false
+  runMultiPageVirtualSync()
+}
+
+async function ensureVisiblePagesMounted(gen) {
+  if (!isMultiPagePreviewMode() || gen !== switchGeneration) return
+  if (isMultiPagePageScrollBusy()) {
+    multiPageVirtualSyncPending = true
+    return
+  }
+  if (isMultiPageVirtualStage()) {
+    if (previewViewport.isNavigationActive?.()) return
+    await mountMultiPageWindowSvgs(gen, 3)
+    return
+  }
+  if (previewViewport.isNavigationActive?.()) {
+    return
+  }
+  const visible = getMultiPageVisibleIndices()
+  for (const pageIndex of visible) {
+    if (gen !== switchGeneration || isMultiPagePageScrollBusy()) {
+      if (isMultiPagePageScrollBusy()) multiPageVirtualSyncPending = true
+      return
+    }
+    const cell = getStage()?.querySelector(`.preview-page-cell[data-page-index="${pageIndex}"]`)
+    if (!cell || cell.querySelector('svg')) continue
+    cell.classList.add('preview-page-cell--loading')
+    const key = rowCacheKey(pageIndex)
+    if (!rowSvgCache.has(key)) {
+      const svg = await buildSvgForRow(pageIndex, gen)
+      if (gen !== switchGeneration || !svg) {
+        cell.classList.remove('preview-page-cell--loading')
+        continue
+      }
+      rowSvgCache.set(key, svg.cloneNode(true))
+    }
+    if (gen === switchGeneration && !isMultiPagePageScrollBusy() && mountMultiPageCellSvg(cell, pageIndex, { animate: false })) {
+      previewViewport.refreshContentSize?.()
+    }
+  }
+}
+
+function cancelMultiPageBackgroundWork() {
+  if (multiPageVirtualSyncRaf) {
+    cancelAnimationFrame(multiPageVirtualSyncRaf)
+    multiPageVirtualSyncRaf = 0
+  }
+  if (multiPageNavMountRaf) {
+    cancelAnimationFrame(multiPageNavMountRaf)
+    multiPageNavMountRaf = 0
+  }
+  if (viewportHeavySyncTimer) {
+    clearTimeout(viewportHeavySyncTimer)
+    viewportHeavySyncTimer = 0
+  }
+  if (viewportPageSelectTimer) {
+    clearTimeout(viewportPageSelectTimer)
+    viewportPageSelectTimer = 0
+  }
+  if (multiPageSvgIdleHandle) {
+    cancelIdleCallback(multiPageSvgIdleHandle)
+    multiPageSvgIdleHandle = 0
+  }
+  viewportPageSelectPending = null
+  multiPageVirtualSyncPending = false
+  multiPageMountPaused = false
+  multiPageAllowCellReveal = false
+  cancelMultiPageCellRevealAnimations()
+}
+
+function beginMultiPageScrollJump() {
+  const stage = getStage()
+  if (!stage) return
+  stage.classList.add('preview-stage--page-scroll')
+  previewArea?.classList.add('public-preview-area--page-scroll')
+  stage.querySelectorAll('.preview-page-cell').forEach((cell) => {
+    unmountMultiPageCellSvg(cell)
+    cell.classList.remove('preview-page-cell--scroll-pass')
+    cell.querySelectorAll('.preview-page-cell-scroll-ghost').forEach((ghost) => ghost.remove())
+  })
+  multiPageVirtualSyncPending = false
+  if (multiPageVirtualSyncRaf) {
+    cancelAnimationFrame(multiPageVirtualSyncRaf)
+    multiPageVirtualSyncRaf = 0
+  }
+}
+
+function spawnMultiPageScrollGhost(cell) {
+  if (cell.querySelector('.preview-page-cell-scroll-ghost')) return
+  const ghost = document.createElement('div')
+  ghost.className = 'preview-page-cell-scroll-ghost'
+  if (previewDisplayMode === 'multi-h') ghost.classList.add('preview-page-cell-scroll-ghost--h')
+  ghost.setAttribute('aria-hidden', 'true')
+  cell.appendChild(ghost)
+  ghost.addEventListener('animationend', () => ghost.remove(), { once: true })
+}
+
+function updateMultiPageScrollTrails() {
+  const stage = getStage()
+  if (!stage?.classList.contains('preview-stage--page-scroll')) return
+  const visible = new Set(previewViewport.getVisiblePageIndices?.() ?? [])
+  stage.querySelectorAll('.preview-page-cell').forEach((cell) => {
+    const pageIndex = Number(cell.dataset.pageIndex)
+    if (!Number.isFinite(pageIndex)) return
+    if (visible.has(pageIndex)) {
+      cell.classList.add('preview-page-cell--scroll-pass')
+    } else if (cell.classList.contains('preview-page-cell--scroll-pass')) {
+      cell.classList.remove('preview-page-cell--scroll-pass')
+      spawnMultiPageScrollGhost(cell)
+    }
+  })
+}
+
+function endMultiPageScrollJump() {
+  const stage = getStage()
+  stage?.classList.remove('preview-stage--page-scroll')
+  previewArea?.classList.remove('public-preview-area--page-scroll')
+  stage?.querySelectorAll('.preview-page-cell').forEach((cell) => {
+    cell.classList.remove('preview-page-cell--scroll-pass')
+  })
+}
+
+async function smoothScrollToMultiPage(rowIndex) {
+  if (!isMultiPagePreviewMode()) {
+    previewViewport.scrollPageIntoView?.(rowIndex)
+    return
+  }
+  const gen = ++multiPageScrollJumpGen
+  previewViewport.cancelPageScrollAnimation?.()
+  beginMultiPageScrollJump()
+  try {
+    await previewViewport.animateScrollToPage(rowIndex, {
+      onFrame: updateMultiPageScrollTrails,
+    })
+    if (gen !== multiPageScrollJumpGen) return
+    endMultiPageScrollJump()
+    syncMultiPageDomWindow({ mountSvg: true })
+    await mountMultiPageWindowSvgs(switchGeneration, 2)
+    const cell = getStage()?.querySelector(`.preview-page-cell[data-page-index="${rowIndex}"]`)
+    if (cell?.querySelector('svg')) {
+      multiPageAllowCellReveal = true
+      if (shouldAnimateMultiPageCellMount()) playCellSvgReveal(cell)
+      multiPageAllowCellReveal = false
+    }
+  } catch {
+    if (gen === multiPageScrollJumpGen) endMultiPageScrollJump()
+  }
+}
+
+function syncMultiPageActiveCell(options = {}) {
+  const stage = getStage()
+  if (!stage?.classList.contains('preview-stage--pages-h')
+    && !stage?.classList.contains('preview-stage--pages-v')) return
+  stage.querySelectorAll('.preview-page-cell').forEach((cell) => {
+    cell.classList.toggle('is-active', Number(cell.dataset.pageIndex) === selectedRow)
+  })
+  if (!isMultiPagePreviewMode()) return
+  if (options.smoothScroll) {
+    void smoothScrollToMultiPage(selectedRow)
+  } else if (options.scrollIntoView !== false) {
+    requestAnimationFrame(() => {
+      previewViewport.scrollPageIntoView?.(selectedRow)
+    })
+  }
+}
+
+/** 多页预览滚动时同步当前可见页，不触发预览区回滚 */
+function setSelectedRowFromViewport(rowIndex) {
+  const rows = getRows()
+  if (!rows.length || !isMultiPagePreviewMode()) return
+  const idx = Math.max(0, Math.min(rowIndex, rows.length - 1))
+  if (idx === selectedRow) return
+  selectedRow = idx
+  previewDisplayedRow = idx
+  syncRowSelectionUi({ keepColumn: true, scrollPreviewIntoView: false, fromViewport: true })
+}
+
+async function renderMultiPagePreview(gen) {
+  const rows = getRows()
+  if (!rows.length) return
+
+  cancelMultiPageBackgroundWork()
+  setPreviewLoadingMessage(`正在加载 ${rows.length} 页…`)
+
+  /** @type {{ pageW: number, pageH: number, index: number }[]} */
+  const cellsMeta = []
+
+  for (let i = 0; i < rows.length; i += 1) {
+    applyRowRenderMetadata(i)
+    const dims = previewStageDimensionsForPage(pageWidthMm, pageHeightMm)
+    cellsMeta.push({ pageW: dims.width, pageH: dims.height, index: i })
+  }
+
+  if (gen !== switchGeneration || !cellsMeta.length) return
+
+  const bounds = computeMultiPageBounds(cellsMeta, PREVIEW_PAGE_GAP, previewDisplayMode)
+  const stageSuffix = previewDisplayMode === 'multi-h' ? 'h' : 'v'
+  multiPageLayoutMeta = buildMultiPageLayoutMeta(cellsMeta, PREVIEW_PAGE_GAP, previewDisplayMode)
+  previewViewport.setPageLayoutGetter?.(() => multiPageLayoutMeta)
+
+  const stage = document.createElement('div')
+  stage.className = `preview-stage preview-stage--pages-${stageSuffix} preview-stage--virtual`
+  stage.dataset.pageGap = String(PREVIEW_PAGE_GAP)
+  stage.dataset.pageCount = String(cellsMeta.length)
+
+  destroyLayoutEditor()
+  previewViewport.setNavigationMode(previewDisplayMode)
+  previewViewport.setContentBounds(bounds.width, bounds.height)
+  previewViewport.setContent(stage)
+  previewDisplayedRow = selectedRow
+
+  syncMultiPageDomWindow({ mountSvg: false })
+
+  await mountMultiPageWindowSvgs(gen, 2)
+  if (gen !== switchGeneration) return
+
+  previewViewport.fitView?.({ anchorPageIndex: selectedRow })
+  previewViewport.scrollPageIntoView?.(selectedRow)
+
+  setPreviewLoadingMessage('')
+  multiPreviewStale = false
+  previewFitPending = false
+  schedulePreviewSvgReveal()
+}
+
 function handlePreviewClick(e) {
   if (e.target.closest('.public-page-nav')) return
+  if (e.target.closest('.public-preview-mode-bar')) return
   if (previewPointerMoved) return
   if (previewViewport.getPanMode?.()) return
-  const svg = getActiveSvg()
+  if (previewArea?.classList.contains('preview-area--panning')) return
+
+  const cell = e.target.closest('.preview-page-cell')
+  let svg = null
+  if (cell) {
+    svg = cell.querySelector('svg')
+    const pageIndex = Number(cell.dataset.pageIndex)
+    if (Number.isFinite(pageIndex) && pageIndex !== selectedRow) {
+      scheduleSelectRow(pageIndex, { keepColumn: false })
+    }
+  } else {
+    svg = getActiveSvg()
+  }
   if (!svg) return
   const column = resolveColumnFromPreviewClick(
     svg,
@@ -764,11 +1530,24 @@ const EXPORT_PROGRESS_STEPS = [
   { id: 'download', label: '保存到本地' },
 ]
 
+const SIMPLE_EXPORT_STEPS = [
+  { id: 'init', label: '准备' },
+  { id: 'generate', label: '生成证书' },
+  { id: 'download', label: '保存到本地' },
+]
+
+/** @type {typeof EXPORT_PROGRESS_STEPS} */
+let currentExportSteps = EXPORT_PROGRESS_STEPS
+
 const EXPORT_PAGE_STEP_LABELS = {
   svg: '生成 SVG',
   prepare: '嵌入图片与字体',
   render: '写入 PDF 矢量',
   done: '本页完成',
+}
+
+function getExportStepLabel(id) {
+  return currentExportSteps.find((s) => s.id === id)?.label || id
 }
 
 function resetExportProgressMeta() {
@@ -944,9 +1723,93 @@ function resetExportProgressTimer() {
 
 function renderExportProgressSteps() {
   if (!exportProgressSteps) return
-  exportProgressSteps.innerHTML = EXPORT_PROGRESS_STEPS.map((step) =>
+  exportProgressSteps.innerHTML = currentExportSteps.map((step) =>
     `<li class="public-export-step" data-step="${step.id}" data-default-label="${step.label}">${step.label}</li>`,
   ).join('')
+}
+
+/**
+ * @param {{ title: string, message?: string, steps?: typeof EXPORT_PROGRESS_STEPS, total?: number, percent?: number }} opts
+ */
+function beginExportProgress(opts) {
+  currentExportSteps = opts.steps || EXPORT_PROGRESS_STEPS
+  exportProgressTotalPages = opts.total || 0
+  resetExportProgressMeta()
+  resetExportProgressTimer()
+  exportProgressPanelOpen = false
+  renderExportProgressSteps()
+  setExportProgress({
+    title: opts.title,
+    message: opts.message || '准备中…',
+    percent: opts.percent ?? 0,
+    stepId: currentExportSteps[0]?.id || 'init',
+    doneSteps: [],
+    total: opts.total,
+  })
+}
+
+function markExportComplete({ title, message }) {
+  setExportProgressBarAnimating(false)
+  stopExportProgressTimeTick()
+  if (exportProgressStartAt != null) {
+    refreshExportProgressTime(`总耗时 ${formatExportDuration(Date.now() - exportProgressStartAt)}`)
+  }
+  const doneSteps = currentExportSteps.map((step) => step.id)
+  setExportProgress({
+    title: title || '导出完成',
+    message: message || '文件已保存到本地',
+    percent: 100,
+    stepId: doneSteps[doneSteps.length - 1] || 'download',
+    doneSteps,
+  })
+}
+
+function markExportFailed(err) {
+  setExportProgressBarAnimating(false)
+  stopExportProgressTimeTick()
+  if (exportProgressStartAt != null) {
+    refreshExportProgressTime(`总耗时 ${formatExportDuration(Date.now() - exportProgressStartAt)}`)
+  }
+  const msg = err?.message || String(err || '未知错误')
+  setExportProgress({
+    title: '导出失败',
+    message: msg,
+    percent: exportProgressCurrentPct,
+  })
+  setExportStatus('导出失败: ' + msg, 0)
+  console.error(err)
+}
+
+async function runBatchExportFontWarmup() {
+  if (catalogFontsLoaded) {
+    exportFontsStepState = 'skipped'
+    exportProgressSkippedSteps.add('fonts')
+    exportProgressStepLabels.fonts = '预加载字体（已加载）'
+    setExportProgress({
+      message: '字体已预加载，跳过此步骤',
+      percent: 4,
+      stepId: 'fonts',
+      doneSteps: ['init', 'fonts'],
+      skippedSteps: ['fonts'],
+      stepLabels: { fonts: '预加载字体（已加载）' },
+    })
+    return
+  }
+  exportFontsStepState = 'loading'
+  setExportProgress({
+    message: '正在预加载证书字体…',
+    percent: 3,
+    stepId: 'fonts',
+    doneSteps: ['init'],
+  })
+  if (fontCatalog) await warmupCatalogFonts(fontCatalog)
+  exportFontsStepState = 'done'
+  setExportProgress({
+    message: '字体预加载完成',
+    percent: 5,
+    stepId: 'doc',
+    doneSteps: ['init', 'fonts'],
+  })
 }
 
 function mergeExportDoneSteps(doneSteps = []) {
@@ -965,7 +1828,7 @@ function updateExportProgressSteps(activeId, doneSteps = []) {
   exportProgressSteps.querySelectorAll('.public-export-step').forEach((li) => {
     const id = li.dataset.step
     if (!id) return
-    const defaultLabel = li.dataset.defaultLabel || EXPORT_PROGRESS_STEPS.find((s) => s.id === id)?.label || id
+    const defaultLabel = li.dataset.defaultLabel || getExportStepLabel(id)
     li.classList.toggle('is-done', mergedDone.includes(id))
     li.classList.toggle('is-active', id === activeId && !exportProgressSkippedSteps.has(id))
     li.classList.toggle('is-skipped', exportProgressSkippedSteps.has(id))
@@ -975,7 +1838,7 @@ function updateExportProgressSteps(activeId, doneSteps = []) {
   if (pagesLi && activeId === 'pages' && pagesLi.dataset.pagesLabel) {
     pagesLi.textContent = pagesLi.dataset.pagesLabel
   } else if (pagesLi && !exportProgressStepLabels.pages) {
-    pagesLi.textContent = EXPORT_PROGRESS_STEPS.find((s) => s.id === 'pages')?.label || '逐页生成证书'
+    pagesLi.textContent = getExportStepLabel('pages') || '逐页生成证书'
     delete pagesLi.dataset.pagesLabel
   }
 }
@@ -1126,16 +1989,16 @@ function hideExportProgress(delayMs = 0) {
 }
 
 function setExportControlsDisabled(disabled) {
-  for (const btn of [btnExportSvg, btnExportPdf, btnExportBatch, btnExportBatchSplit]) {
-    if (btn) btn.disabled = disabled || !getRows().length
-  }
+  const hasRows = getRows().length > 0
+  const on = disabled || !hasRows
+  if (btnExportToggle) btnExportToggle.disabled = on
+  exportMenuItems.forEach((item) => {
+    item.disabled = on
+  })
 }
 
 function updateExportButtons() {
-  const hasRows = getRows().length > 0
-  for (const btn of [btnExportSvg, btnExportPdf, btnExportBatch, btnExportBatchSplit]) {
-    if (btn) btn.disabled = !hasRows
-  }
+  setExportControlsDisabled(false)
 }
 
 function downloadBlob(blob, filename) {
@@ -1490,20 +2353,39 @@ function updatePaginationSelection() {
 /** @type {number} */
 let syncRowCardRaf = 0
 
-function syncRowSelectionUi({ keepColumn = false } = {}) {
+function syncRowSelectionUi({ keepColumn = false, scrollPreviewIntoView = true, fromViewport = false, smoothPreviewScroll = false } = {}) {
   updatePaginationSelection()
-  ensureSpreadsheet().syncPageRowSelection?.(
-    selectedRow,
-    keepColumn && selectedCol >= 0 ? selectedCol : -1,
-  )
-  ensureSpreadsheet().refreshSelectionVisuals?.()
+  const syncSpreadsheet = () => {
+    ensureSpreadsheet().syncPageRowSelection?.(
+      selectedRow,
+      keepColumn && selectedCol >= 0 ? selectedCol : -1,
+    )
+    ensureSpreadsheet().refreshSelectionVisuals?.()
+    scrollPublicTableToSelectedRow()
+    relationMap?.updateSelection()
+    if (syncRowCardRaf) cancelAnimationFrame(syncRowCardRaf)
+    syncRowCardRaf = requestAnimationFrame(() => {
+      syncRowCardRaf = 0
+      renderPublicRowCard()
+    })
+  }
+  if (fromViewport) {
+    if (viewportHeavySyncTimer) clearTimeout(viewportHeavySyncTimer)
+    viewportHeavySyncTimer = setTimeout(() => {
+      viewportHeavySyncTimer = 0
+      syncSpreadsheet()
+    }, 150)
+  } else {
+    if (viewportHeavySyncTimer) {
+      clearTimeout(viewportHeavySyncTimer)
+      viewportHeavySyncTimer = 0
+    }
+    syncSpreadsheet()
+  }
   updateExportButtons()
-  scrollPublicTableToSelectedRow()
-  relationMap?.updateSelection()
-  if (syncRowCardRaf) cancelAnimationFrame(syncRowCardRaf)
-  syncRowCardRaf = requestAnimationFrame(() => {
-    syncRowCardRaf = 0
-    renderPublicRowCard()
+  syncMultiPageActiveCell({
+    scrollIntoView: scrollPreviewIntoView && !smoothPreviewScroll,
+    smoothScroll: scrollPreviewIntoView && smoothPreviewScroll,
   })
 }
 
@@ -1614,11 +2496,17 @@ function renderPublicRowCard() {
 }
 
 function showSvgInStage(svgEl) {
+  previewViewport.setNavigationMode('single')
+  previewViewport.setContentBounds(null)
   const stage = getStage()
   if (stage) {
     destroyLayoutEditor()
+    resetStageFromMultiPage(stage)
+    clearMultiPagePreviewLayout()
     stage.replaceChildren(svgEl)
+    previewViewport.refreshContentSize?.()
   } else {
+    clearMultiPagePreviewLayout()
     mountStageWithSvg(svgEl)
   }
   requestAnimationFrame(() => {
@@ -1978,7 +2866,7 @@ function handlePageJumpClick(e) {
   e.stopPropagation()
   const page = Number(btn.dataset.page)
   if (!Number.isFinite(page) || page === selectedRow) return
-  scheduleSelectRow(page)
+  scheduleSelectRow(page, { smoothPreviewScroll: isMultiPagePreviewMode() })
 }
 
 function isPublicSidebarCollapseSupported() {
@@ -2061,7 +2949,7 @@ function resetPublicViewerToSelectPrompt(message) {
   presetCustomSamples = {}
   columnOrder = null
   previewDisplayedRow = -1
-  rowSvgCache.clear()
+  invalidatePreviewCache()
   destroyLayoutEditor()
 
   if (titleEl) titleEl.textContent = siteText('selectEntity', cfg)
@@ -2107,7 +2995,7 @@ function schedulePreviewFitAfterSwitch(gen) {
   if (!previewFitPending) return
   requestAnimationFrame(() => {
     if (gen !== loadGeneration) return
-    previewViewport.fitView()
+    previewViewport.fitView({ anchorPageIndex: selectedRow })
     previewFitPending = false
   })
 }
@@ -2158,7 +3046,7 @@ async function enrichPublicRenderFields(id, certificate, gen) {
     table_template_columns: fields.tableTemplateColumns ?? certificate.table_template_columns,
   })
   previewDisplayedRow = -1
-  rowSvgCache.clear()
+  invalidatePreviewCache()
   previewFontReady = catalogFontsLoaded
   renderTable()
   scheduleSelectRow(selectedRow, { keepColumn: true })
@@ -2225,7 +3113,7 @@ async function loadCertificate(id) {
   selectedColumnName = ''
   previewDisplayedRow = -1
   previewFontReady = catalogFontsLoaded
-  rowSvgCache.clear()
+  invalidatePreviewCache()
   destroyLayoutEditor()
 
   titleEl.textContent = certificate.title
@@ -2774,6 +3662,7 @@ let previewPointerStart = null
 
 previewArea?.addEventListener('pointerdown', (e) => {
   if (e.target.closest('.public-page-nav')) return
+  if (e.target.closest('.public-preview-mode-bar')) return
   previewPointerMoved = false
   previewPointerStart = { x: e.clientX, y: e.clientY }
 })
@@ -2842,8 +3731,19 @@ nextBtn?.addEventListener('click', () => {
 
 document.getElementById('public-zoom-in')?.addEventListener('click', () => previewViewport.zoomIn())
 document.getElementById('public-zoom-out')?.addEventListener('click', () => previewViewport.zoomOut())
-document.getElementById('public-zoom-fit')?.addEventListener('click', () => previewViewport.fitView())
+document.getElementById('public-zoom-fit')?.addEventListener('click', () => {
+  previewViewport.fitView({ anchorPageIndex: selectedRow })
+})
 document.getElementById('public-zoom-reset')?.addEventListener('click', () => previewViewport.resetView())
+
+document.querySelectorAll('.public-preview-mode-btn').forEach((btn) => {
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation()
+    const mode = btn.dataset.previewMode
+    if (mode) setPreviewDisplayMode(/** @type {'single' | 'multi-h' | 'multi-v'} */ (mode))
+  })
+})
+updatePreviewModeUi()
 
 btnPreviewFullscreen?.addEventListener('click', () => {
   setPublicPreviewFullscreen(!document.body.classList.contains('public-preview-fullscreen'))
@@ -2873,89 +3773,100 @@ showTemplateLayerInput?.addEventListener('change', () => {
   showTemplateLayer = !!showTemplateLayerInput.checked
   previewFontReady = catalogFontsLoaded
   previewDisplayedRow = -1
-  rowSvgCache.clear()
+  invalidatePreviewCache()
   scheduleSelectRow(selectedRow, { keepColumn: true })
 })
 
-btnExportSvg?.addEventListener('click', async () => {
-  const rows = getRows()
-  if (!rows.length) return setExportStatus('没有数据')
-  setExportStatus('正在导出 SVG…', 0)
-  try {
-    const svgEl = await buildSvgForExport(selectedRow)
-    const filename = buildExportFilenameForRow(selectedRow, 'svg')
-    const blob = new Blob([await serializeSvgForExport(svgEl)], { type: 'image/svg+xml;charset=utf-8' })
-    downloadBlob(blob, filename)
-    setExportStatus('SVG 已导出')
-    trackActivity('svg_download')
-  } catch (err) {
-    console.error(err)
-    setExportStatus('SVG 导出失败: ' + (err.message || '未知错误'))
-  }
-})
-
-btnExportPdf?.addEventListener('click', async () => {
-  const rows = getRows()
-  if (!rows.length) return setExportStatus('没有数据')
-  setExportStatus('正在生成 PDF…', 0)
-  btnExportPdf.disabled = true
-  try {
-    const svgEl = await buildSvgForExport(selectedRow)
-    const filename = buildExportFilenameForRow(selectedRow, 'pdf')
-    await exportSvgToPdf(svgEl, filename, pdfExportOptionsFromApp())
-    setExportStatus('PDF 已导出')
-    trackActivity('pdf_download')
-  } catch (err) {
-    console.error(err)
-    setExportStatus('PDF 导出失败: ' + (err.message || '未知错误'))
-  } finally {
-    updateExportButtons()
-  }
-})
-
-btnExportBatch?.addEventListener('click', async () => {
+async function runExportSvg() {
   const rows = getRows()
   if (!rows.length) return setExportStatus('没有数据')
   setExportControlsDisabled(true)
-  exportProgressTotalPages = rows.length
-  setExportProgress({
+  beginExportProgress({
+    title: '正在导出 SVG',
+    message: '准备中…',
+    steps: SIMPLE_EXPORT_STEPS,
+    percent: 5,
+  })
+  try {
+    setExportProgress({
+      message: '正在生成 SVG…',
+      percent: 45,
+      stepId: 'generate',
+      doneSteps: ['init'],
+    })
+    const svgEl = await buildSvgForExport(selectedRow)
+    const filename = buildExportFilenameForRow(selectedRow, 'svg')
+    setExportProgress({
+      message: '正在保存文件…',
+      percent: 85,
+      stepId: 'download',
+      doneSteps: ['init', 'generate'],
+    })
+    const blob = new Blob([await serializeSvgForExport(svgEl)], { type: 'image/svg+xml;charset=utf-8' })
+    downloadBlob(blob, filename)
+    markExportComplete({
+      title: 'SVG 导出完成',
+      message: `已保存：${filename}`,
+    })
+    setExportStatus('SVG 已导出', 0)
+    trackActivity('svg_download')
+  } catch (err) {
+    markExportFailed(err)
+  } finally {
+    setExportControlsDisabled(false)
+  }
+}
+
+async function runExportPdf() {
+  const rows = getRows()
+  if (!rows.length) return setExportStatus('没有数据')
+  setExportControlsDisabled(true)
+  beginExportProgress({
+    title: '正在导出 PDF',
+    message: '准备中…',
+    steps: SIMPLE_EXPORT_STEPS,
+    percent: 5,
+  })
+  try {
+    setExportProgress({
+      message: '正在生成 PDF…',
+      percent: 45,
+      stepId: 'generate',
+      doneSteps: ['init'],
+    })
+    const svgEl = await buildSvgForExport(selectedRow)
+    const filename = buildExportFilenameForRow(selectedRow, 'pdf')
+    setExportProgress({
+      message: '正在写入 PDF 文件…',
+      percent: 80,
+      stepId: 'download',
+      doneSteps: ['init', 'generate'],
+    })
+    await exportSvgToPdf(svgEl, filename, pdfExportOptionsFromApp())
+    markExportComplete({
+      title: 'PDF 导出完成',
+      message: `已保存：${filename}`,
+    })
+    setExportStatus('PDF 已导出', 0)
+    trackActivity('pdf_download')
+  } catch (err) {
+    markExportFailed(err)
+  } finally {
+    setExportControlsDisabled(false)
+  }
+}
+
+async function runExportBatch() {
+  const rows = getRows()
+  if (!rows.length) return setExportStatus('没有数据')
+  setExportControlsDisabled(true)
+  beginExportProgress({
     title: '正在导出合并多页 PDF',
     message: '准备导出…',
-    percent: 0,
-    stepId: 'init',
-    doneSteps: [],
     total: rows.length,
   })
   try {
-    if (catalogFontsLoaded) {
-      exportFontsStepState = 'skipped'
-      exportProgressSkippedSteps.add('fonts')
-      exportProgressStepLabels.fonts = '预加载字体（已加载）'
-      setExportProgress({
-        message: '字体已预加载，跳过此步骤',
-        percent: 4,
-        stepId: 'fonts',
-        doneSteps: ['init', 'fonts'],
-        skippedSteps: ['fonts'],
-        stepLabels: { fonts: '预加载字体（已加载）' },
-      })
-    } else {
-      exportFontsStepState = 'loading'
-      setExportProgress({
-        message: '正在预加载证书字体…',
-        percent: 3,
-        stepId: 'fonts',
-        doneSteps: ['init'],
-      })
-      if (fontCatalog) await warmupCatalogFonts(fontCatalog)
-      exportFontsStepState = 'done'
-      setExportProgress({
-        message: '字体预加载完成',
-        percent: 5,
-        stepId: 'doc',
-        doneSteps: ['init', 'fonts'],
-      })
-    }
+    await runBatchExportFontWarmup()
     const filename = buildMergedPdfFilename()
     await exportRowsToSinglePdf(
       rows,
@@ -2965,60 +3876,30 @@ btnExportBatch?.addEventListener('click', async () => {
       applyPdfExportProgress,
       { getPageLabel: (_row, i) => getPageNavRowLabel(i) },
     )
-    setExportStatus(`已导出 ${rows.length} 页 PDF`)
-    hideExportProgress(2200)
+    markExportComplete({
+      title: '合并 PDF 导出完成',
+      message: `已保存 ${rows.length} 页：${filename}`,
+    })
+    setExportStatus(`已导出 ${rows.length} 页 PDF`, 0)
+    trackActivity('pdf_download', { details: { mode: 'batch_merge', pages: rows.length } })
   } catch (err) {
-    console.error(err)
-    hideExportProgress(0)
-    setExportStatus('导出失败: ' + (err.message || '未知错误'))
+    markExportFailed(err)
   } finally {
     setExportControlsDisabled(false)
   }
-})
+}
 
-btnExportBatchSplit?.addEventListener('click', async () => {
+async function runExportBatchSplit() {
   const rows = getRows()
   if (!rows.length) return setExportStatus('没有数据')
   setExportControlsDisabled(true)
-  exportProgressTotalPages = rows.length
-  setExportProgress({
+  beginExportProgress({
     title: '正在导出每页独立 PDF',
     message: '准备导出…',
-    percent: 0,
-    stepId: 'init',
-    doneSteps: [],
     total: rows.length,
   })
   try {
-    if (catalogFontsLoaded) {
-      exportFontsStepState = 'skipped'
-      exportProgressSkippedSteps.add('fonts')
-      exportProgressStepLabels.fonts = '预加载字体（已加载）'
-      setExportProgress({
-        message: '字体已预加载，跳过此步骤',
-        percent: 4,
-        stepId: 'fonts',
-        doneSteps: ['init', 'fonts'],
-        skippedSteps: ['fonts'],
-        stepLabels: { fonts: '预加载字体（已加载）' },
-      })
-    } else {
-      exportFontsStepState = 'loading'
-      setExportProgress({
-        message: '正在预加载证书字体…',
-        percent: 3,
-        stepId: 'fonts',
-        doneSteps: ['init'],
-      })
-      if (fontCatalog) await warmupCatalogFonts(fontCatalog)
-      exportFontsStepState = 'done'
-      setExportProgress({
-        message: '字体预加载完成',
-        percent: 5,
-        stepId: 'pages',
-        doneSteps: ['init', 'fonts'],
-      })
-    }
+    await runBatchExportFontWarmup()
     const zipBasename = getCertListExportBasename()
     await exportBatchPdf(
       rows,
@@ -3040,16 +3921,125 @@ btnExportBatchSplit?.addEventListener('click', async () => {
         },
       },
     )
-    setExportStatus(`已导出 ${rows.length} 个 PDF（ZIP）`)
-    hideExportProgress(2200)
+    markExportComplete({
+      title: '独立 PDF 导出完成',
+      message: `已打包 ${rows.length} 个 PDF：${zipBasename}.zip`,
+    })
+    setExportStatus(`已导出 ${rows.length} 个 PDF（ZIP）`, 0)
     trackActivity('pdf_download', { details: { mode: 'batch_split', pages: rows.length } })
   } catch (err) {
-    console.error(err)
-    hideExportProgress(0)
-    setExportStatus('导出失败: ' + (err.message || '未知错误'))
+    markExportFailed(err)
   } finally {
     setExportControlsDisabled(false)
   }
+}
+
+/** @param {'svg' | 'pdf' | 'batch' | 'batch-split'} mode */
+async function runPublicExport(mode) {
+  if (mode === 'svg') return runExportSvg()
+  if (mode === 'pdf') return runExportPdf()
+  if (mode === 'batch') return runExportBatch()
+  if (mode === 'batch-split') return runExportBatchSplit()
+}
+
+function wirePublicExportMenu() {
+  const toggle = btnExportToggle
+  const popover = exportMenuPopover
+  if (!toggle || !popover) return
+
+  const menuEl = toggle.closest('.public-export-menu')
+  let scrollCloseBound = false
+
+  const positionPopover = () => {
+    const rect = toggle.getBoundingClientRect()
+    const popoverWidth = popover.offsetWidth || 220
+    let left = rect.right - popoverWidth
+    left = Math.max(8, Math.min(left, window.innerWidth - popoverWidth - 8))
+    popover.style.position = 'fixed'
+    popover.style.top = `${rect.bottom + 4}px`
+    popover.style.left = `${left}px`
+    popover.style.right = 'auto'
+    popover.style.zIndex = '10050'
+  }
+
+  const clearPopoverPosition = () => {
+    popover.style.position = ''
+    popover.style.top = ''
+    popover.style.left = ''
+    popover.style.right = ''
+    popover.style.zIndex = ''
+    if (menuEl && popover.parentElement !== menuEl) {
+      menuEl.appendChild(popover)
+    }
+  }
+
+  const close = () => {
+    popover.hidden = true
+    toggle.setAttribute('aria-expanded', 'false')
+    clearPopoverPosition()
+    if (scrollCloseBound) {
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('resize', close)
+      scrollCloseBound = false
+    }
+  }
+
+  const open = () => {
+    document.querySelectorAll('.public-export-menu-popover').forEach((el) => {
+      if (el !== popover) {
+        el.hidden = true
+        el.style.position = ''
+        el.style.top = ''
+        el.style.left = ''
+        el.style.right = ''
+        el.style.zIndex = ''
+      }
+    })
+    document.querySelectorAll('.public-export-menu-btn[aria-expanded="true"]').forEach((el) => {
+      if (el !== toggle) el.setAttribute('aria-expanded', 'false')
+    })
+    if (menuEl) document.body.appendChild(popover)
+    popover.hidden = false
+    toggle.setAttribute('aria-expanded', 'true')
+    positionPopover()
+    if (!scrollCloseBound) {
+      window.addEventListener('scroll', close, true)
+      window.addEventListener('resize', close)
+      scrollCloseBound = true
+    }
+  }
+
+  toggle.addEventListener('click', (e) => {
+    e.stopPropagation()
+    if (toggle.disabled) return
+    if (popover.hidden) open()
+    else close()
+  })
+
+  exportMenuItems.forEach((item) => {
+    item.addEventListener('click', async (e) => {
+      e.stopPropagation()
+      close()
+      if (item.disabled) return
+      const mode = item.dataset.exportMode
+      if (!mode) return
+      await runPublicExport(/** @type {'svg' | 'pdf' | 'batch' | 'batch-split'} */ (mode))
+    })
+  })
+
+  if (!document.body.dataset.publicExportMenuBound) {
+    document.body.dataset.publicExportMenuBound = '1'
+    document.addEventListener('click', close)
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') close()
+    })
+  }
+}
+
+wirePublicExportMenu()
+
+exportProgressCloseBtn?.addEventListener('click', () => {
+  hideExportProgress(0)
 })
 
 function buildRowExportBasenameForRow(rowIndex) {

@@ -2,6 +2,11 @@ import { TEMPLATE_VIEWBOX } from './svgEngine.js'
 import { previewStageDimensionsForPage } from './templateBackground.js'
 import { DEFAULT_PAGE_WIDTH_MM, DEFAULT_PAGE_HEIGHT_MM } from './pageSize.js'
 import { mmToSvgUserUnits } from './layoutUnits.js'
+import {
+  getMultiPageCellRect,
+  getVisiblePageIndexFromLayout,
+  getVisiblePageIndicesFromLayout,
+} from './multiPageVirtual.js'
 
 const MIN_ZOOM = 0.1
 const MAX_ZOOM = 8
@@ -17,10 +22,10 @@ function snapCssPx(value) {
  * 预览区缩放 / 平移：通过改变 SVG 实际像素尺寸保持矢量清晰；
  * 滚轮以光标为中心缩放，抓手或中键拖拽平移。
  * @param {HTMLElement} previewArea
- * @param {{ workspacePaddingMm?: number, onScaleChange?: (scale: number) => void, onViewChange?: (state: { scale: number, panX: number, panY: number }) => void, onMiddlePanActiveChange?: (active: boolean) => void, enableTouchGestures?: boolean, enablePageSwipe?: boolean | (() => boolean), canSwipePage?: (dir: 'prev' | 'next') => boolean, onSwipePage?: (dir: 'prev' | 'next') => void | Promise<void> }} [options]
+ * @param {{ workspacePaddingMm?: number, onScaleChange?: (scale: number) => void, onViewChange?: (state: { scale: number, panX: number, panY: number }) => void, onVisiblePageChange?: (pageIndex: number) => void, onNavigationActiveChange?: (active: boolean) => void, onMiddlePanActiveChange?: (active: boolean) => void, enableTouchGestures?: boolean, enablePageSwipe?: boolean | (() => boolean), canSwipePage?: (dir: 'prev' | 'next') => boolean, onSwipePage?: (dir: 'prev' | 'next') => void | Promise<void> }} [options]
  */
 export function mountPreviewViewport(previewArea, options = {}) {
-  const { onScaleChange, onViewChange } = options
+  const { onScaleChange, onViewChange, onVisiblePageChange, onNavigationActiveChange } = options
   let workspacePaddingMm = Math.max(0, Number(options.workspacePaddingMm) || 0)
   let pageWidthMm = DEFAULT_PAGE_WIDTH_MM
   let pageHeightMm = DEFAULT_PAGE_HEIGHT_MM
@@ -68,11 +73,362 @@ export function mountPreviewViewport(previewArea, options = {}) {
   let panStart = { x: 0, y: 0, panX: 0, panY: 0 }
   let spaceHeld = false
   let viewportHovered = false
+  /** @type {'single' | 'multi-v' | 'multi-h'} */
+  let navigationMode = 'single'
+  /** @type {{ width: number, height: number } | null} */
+  let contentBoundsOverride = null
+
+  const VIEW_PAD = 24
+  const SCROLL_PAD = 12
+  let suppressVisiblePageNotify = false
+  let visiblePageNotifyRaf = 0
+
+  /** 拖拽 / 滚轮平移 / 触摸平移期间为 true，用于推迟重 DOM 操作 */
+  let navActiveMask = 0
+  /** @type {ReturnType<typeof setTimeout> | 0} */
+  let navWheelIdleTimer = 0
+  const NAV_POINTER = 1
+  const NAV_WHEEL = 2
+  const NAV_TOUCH = 4
+  const NAV_PAGE_SCROLL = 8
+
+  /** @type {number} */
+  let pageScrollAnimRaf = 0
+  /** @type {(() => void) | null} */
+  let pageScrollAnimCancel = null
+
+  function setNavigationActive(source, active) {
+    const prev = navActiveMask !== 0
+    if (active) navActiveMask |= source
+    else navActiveMask &= ~source
+    const now = navActiveMask !== 0
+    if (now === prev) return
+    onNavigationActiveChange?.(now)
+  }
+
+  function bumpWheelNavigation() {
+    if (!isScrollNavigation()) return
+    setNavigationActive(NAV_WHEEL, true)
+    if (navWheelIdleTimer) clearTimeout(navWheelIdleTimer)
+    navWheelIdleTimer = setTimeout(() => {
+      navWheelIdleTimer = 0
+      setNavigationActive(NAV_WHEEL, false)
+    }, 200)
+  }
+
+  function isScrollNavigation() {
+    return navigationMode === 'multi-v' || navigationMode === 'multi-h'
+  }
+
+  /** @type {(() => import('./multiPageVirtual.js').MultiPageLayoutMeta | null) | null} */
+  let pageLayoutGetter = null
+
+  function getPageLayout() {
+    return pageLayoutGetter?.() ?? null
+  }
+
+  function getLayoutCellMetrics(pageIndex) {
+    const layout = getPageLayout()
+    if (!layout || pageIndex < 0 || pageIndex >= layout.count) return null
+    const rect = getMultiPageCellRect(layout, pageIndex, scale)
+    if (!rect) return null
+    return {
+      left: snapCssPx(rect.left),
+      top: snapCssPx(rect.top),
+      width: snapCssPx(rect.width),
+      height: snapCssPx(rect.height),
+    }
+  }
+
+  function setPageLayoutGetter(getter) {
+    pageLayoutGetter = typeof getter === 'function' ? getter : null
+  }
+
+  function setNavigationMode(mode = 'single') {
+    navigationMode = mode === 'multi-v' || mode === 'multi-h' ? mode : 'single'
+    previewArea.classList.toggle('preview-area--nav-scroll', isScrollNavigation())
+    previewArea.classList.toggle('preview-area--nav-multi-v', navigationMode === 'multi-v')
+    previewArea.classList.toggle('preview-area--nav-multi-h', navigationMode === 'multi-h')
+    updatePanVisuals()
+  }
+
+  function clampPanValues(px, py) {
+    const vw = viewport.clientWidth
+    const vh = viewport.clientHeight
+    if (vw < 2 || vh < 2) return { panX: px, panY: py }
+    const contentW = baseWidth * scale
+    const contentH = baseHeight * scale
+    let nextX = px
+    let nextY = py
+
+    if (navigationMode === 'multi-v') {
+      nextX = contentW <= vw
+        ? (vw - contentW) / 2
+        : Math.min(SCROLL_PAD, Math.max(vw - contentW - SCROLL_PAD, px))
+      nextY = contentH <= vh
+        ? (vh - contentH) / 2
+        : Math.min(SCROLL_PAD, Math.max(vh - contentH - SCROLL_PAD, py))
+      return { panX: nextX, panY: nextY }
+    }
+
+    nextY = contentH <= vh
+      ? (vh - contentH) / 2
+      : Math.min(SCROLL_PAD, Math.max(vh - contentH - SCROLL_PAD, py))
+    nextX = contentW <= vw
+      ? (vw - contentW) / 2
+      : Math.min(SCROLL_PAD, Math.max(vw - contentW - SCROLL_PAD, px))
+    return { panX: nextX, panY: nextY }
+  }
+
+  function clampPan() {
+    if (!isScrollNavigation()) return
+    const clamped = clampPanValues(panX, panY)
+    panX = clamped.panX
+    panY = clamped.panY
+  }
+
+  /** @param {number} pageIndex @param {{ center?: boolean }} [opts] */
+  function computePanForPage(pageIndex, opts = {}) {
+    if (!isScrollNavigation()) return { panX, panY }
+    const metrics = getLayoutCellMetrics(pageIndex)
+    const cell = !metrics ? slot.querySelector(`.preview-page-cell[data-page-index="${pageIndex}"]`) : null
+    const vw = viewport.clientWidth
+    const vh = viewport.clientHeight
+    let cellTop
+    let cellLeft
+    let cellH
+    let cellW
+    if (metrics) {
+      cellLeft = metrics.left
+      cellTop = metrics.top
+      cellW = metrics.width
+      cellH = metrics.height
+    } else if (cell) {
+      cellTop = cell.offsetTop
+      cellLeft = cell.offsetLeft
+      cellH = cell.offsetHeight
+      cellW = cell.offsetWidth
+    } else {
+      return { panX, panY }
+    }
+    let targetPanX = panX
+    let targetPanY = panY
+
+    if (opts.center) {
+      if (navigationMode === 'multi-v') {
+        targetPanY = -((cellTop + cellH / 2) - vh / 2)
+      } else {
+        targetPanX = -((cellLeft + cellW / 2) - vw / 2)
+      }
+      return clampPanValues(targetPanX, targetPanY)
+    }
+
+    if (navigationMode === 'multi-v') {
+      const viewTop = -panY + SCROLL_PAD
+      const viewBottom = -panY + vh - SCROLL_PAD
+      if (cellTop < viewTop) targetPanY = -(cellTop - SCROLL_PAD)
+      else if (cellTop + cellH > viewBottom) targetPanY = -(cellTop + cellH - vh + SCROLL_PAD)
+    } else {
+      const viewLeft = -panX + SCROLL_PAD
+      const viewRight = -panX + vw - SCROLL_PAD
+      if (cellLeft < viewLeft) targetPanX = -(cellLeft - SCROLL_PAD)
+      else if (cellLeft + cellW > viewRight) targetPanX = -(cellLeft + cellW - vw + SCROLL_PAD)
+    }
+    return clampPanValues(targetPanX, targetPanY)
+  }
+
+  function cancelPageScrollAnimation() {
+    if (pageScrollAnimRaf) {
+      cancelAnimationFrame(pageScrollAnimRaf)
+      pageScrollAnimRaf = 0
+    }
+    if (pageScrollAnimCancel) {
+      pageScrollAnimCancel()
+      pageScrollAnimCancel = null
+    }
+    setNavigationActive(NAV_PAGE_SCROLL, false)
+  }
+
+  function easeInOutCubic(t) {
+    return t < 0.5 ? 4 * t * t * t : 1 - ((-2 * t + 2) ** 3) / 2
+  }
+
+  /**
+   * 丝滑滚动到指定页（多页模式）
+   * @param {number} pageIndex
+   * @param {{ onFrame?: () => void }} [options]
+   */
+  function animateScrollToPage(pageIndex, options = {}) {
+    if (!isScrollNavigation()) return Promise.resolve()
+    cancelPageScrollAnimation()
+
+    const target = computePanForPage(pageIndex, { center: true })
+    const startPanX = panX
+    const startPanY = panY
+    const dist = Math.hypot(target.panX - startPanX, target.panY - startPanY)
+    if (dist < 1.5) return Promise.resolve()
+
+    const duration = Math.min(820, Math.max(380, 340 + dist * 0.28))
+    previewArea.classList.add('preview-area--page-scroll-jump')
+    suppressVisiblePageNotify = true
+    setNavigationActive(NAV_PAGE_SCROLL, true)
+
+    return new Promise((resolve) => {
+      const startTime = performance.now()
+      let settled = false
+
+      const finish = () => {
+        if (settled) return
+        settled = true
+        pageScrollAnimRaf = 0
+        pageScrollAnimCancel = null
+        panX = target.panX
+        panY = target.panY
+        clampPan()
+        applyTransform()
+        previewArea.classList.remove('preview-area--page-scroll-jump')
+        suppressVisiblePageNotify = true
+        requestAnimationFrame(() => {
+          suppressVisiblePageNotify = false
+          setNavigationActive(NAV_PAGE_SCROLL, false)
+          resolve()
+        })
+      }
+
+      pageScrollAnimCancel = finish
+
+      const tick = (now) => {
+        const elapsed = now - startTime
+        const t = Math.min(1, elapsed / duration)
+        const eased = easeInOutCubic(t)
+        panX = startPanX + (target.panX - startPanX) * eased
+        panY = startPanY + (target.panY - startPanY) * eased
+        clampPan()
+        applyTransform()
+        options.onFrame?.()
+        if (t >= 1) finish()
+        else pageScrollAnimRaf = requestAnimationFrame(tick)
+      }
+
+      pageScrollAnimRaf = requestAnimationFrame(tick)
+    })
+  }
+
+  /** @returns {number | null} */
+  function getVisiblePageIndex() {
+    if (!isScrollNavigation()) return null
+    const vw = viewport.clientWidth
+    const vh = viewport.clientHeight
+    const layout = getPageLayout()
+    if (layout) {
+      return getVisiblePageIndexFromLayout(layout, scale, panX, panY, vw, vh)
+    }
+    const cells = slot.querySelectorAll('.preview-page-cell')
+    if (!cells.length) return null
+
+    const viewLeft = -panX
+    const viewTop = -panY
+    const viewRight = viewLeft + vw
+    const viewBottom = viewTop + vh
+
+    let bestIndex = null
+    let bestVisible = -1
+
+    cells.forEach((cell) => {
+      const index = Number(cell.dataset.pageIndex)
+      if (!Number.isFinite(index)) return
+
+      const left = cell.offsetLeft
+      const top = cell.offsetTop
+      const right = left + cell.offsetWidth
+      const bottom = top + cell.offsetHeight
+
+      const overlapW = Math.max(0, Math.min(right, viewRight) - Math.max(left, viewLeft))
+      const overlapH = Math.max(0, Math.min(bottom, viewBottom) - Math.max(top, viewTop))
+      const visibleArea = overlapW * overlapH
+
+      if (visibleArea > bestVisible) {
+        bestVisible = visibleArea
+        bestIndex = index
+      }
+    })
+
+    return bestIndex
+  }
+
+  /** 与视口有交集的页码（仅多页滚动模式） */
+  function getVisiblePageIndices() {
+    if (!isScrollNavigation()) return []
+    const vw = viewport.clientWidth
+    const vh = viewport.clientHeight
+    const layout = getPageLayout()
+    if (layout) {
+      return getVisiblePageIndicesFromLayout(layout, scale, panX, panY, vw, vh)
+    }
+    const cells = slot.querySelectorAll('.preview-page-cell')
+    if (!cells.length) return []
+
+    const viewLeft = -panX
+    const viewTop = -panY
+    const viewRight = viewLeft + vw
+    const viewBottom = viewTop + vh
+
+    /** @type {number[]} */
+    const indices = []
+    cells.forEach((cell) => {
+      const index = Number(cell.dataset.pageIndex)
+      if (!Number.isFinite(index)) return
+
+      const pw = Number(cell.dataset.pageW) || artboardWidth
+      const ph = Number(cell.dataset.pageH) || artboardHeight
+      const w = cell.offsetWidth || Math.round(pw * scale)
+      const h = cell.offsetHeight || Math.round(ph * scale)
+      const left = cell.offsetLeft
+      const top = cell.offsetTop
+      const right = left + w
+      const bottom = top + h
+
+      const overlapW = Math.max(0, Math.min(right, viewRight) - Math.max(left, viewLeft))
+      const overlapH = Math.max(0, Math.min(bottom, viewBottom) - Math.max(top, viewTop))
+      if (overlapW > 0 && overlapH > 0) indices.push(index)
+    })
+    return indices.sort((a, b) => a - b)
+  }
+
+  function notifyVisiblePageChange() {
+    if (!isScrollNavigation() || !onVisiblePageChange || suppressVisiblePageNotify) return
+    if (visiblePageNotifyRaf) cancelAnimationFrame(visiblePageNotifyRaf)
+    visiblePageNotifyRaf = requestAnimationFrame(() => {
+      visiblePageNotifyRaf = 0
+      const index = getVisiblePageIndex()
+      if (index != null) onVisiblePageChange(index)
+    })
+  }
+
+  /** @param {number} pageIndex */
+  function scrollPageIntoView(pageIndex) {
+    if (!isScrollNavigation()) return
+    cancelPageScrollAnimation()
+    const target = computePanForPage(pageIndex)
+    suppressVisiblePageNotify = true
+    panX = target.panX
+    panY = target.panY
+    clampPan()
+    applyTransform()
+    requestAnimationFrame(() => {
+      suppressVisiblePageNotify = false
+    })
+  }
 
   function recomputeBaseDimensions() {
     const dims = previewStageDimensionsForPage(pageWidthMm, pageHeightMm)
     artboardWidth = dims.width
     artboardHeight = dims.height
+    if (contentBoundsOverride) {
+      baseWidth = contentBoundsOverride.width
+      baseHeight = contentBoundsOverride.height
+      return
+    }
     if (workspacePaddingMm > 0) {
       workspacePadX = mmToSvgUserUnits(workspacePaddingMm, 'x', pageWidthMm, pageHeightMm)
       workspacePadY = mmToSvgUserUnits(workspacePaddingMm, 'y', pageWidthMm, pageHeightMm)
@@ -100,6 +456,43 @@ export function mountPreviewViewport(previewArea, options = {}) {
     const h = Math.round(snapCssPx(baseHeight * scale))
     stage.style.width = `${w}px`
     stage.style.height = `${h}px`
+
+    const isMultiLayout = stage.classList.contains('preview-stage--pages-h')
+      || stage.classList.contains('preview-stage--pages-v')
+    if (isMultiLayout) {
+      const gap = Number(stage.dataset.pageGap) || 16
+      const isVirtual = stage.classList.contains('preview-stage--virtual')
+      if (!isVirtual) {
+        stage.style.gap = `${Math.round(snapCssPx(gap * scale))}px`
+      } else {
+        stage.style.gap = '0'
+      }
+      stage.querySelectorAll('.preview-page-cell').forEach((cell) => {
+        const pageIndex = Number(cell.dataset.pageIndex)
+        const pw = Number(cell.dataset.pageW) || artboardWidth
+        const ph = Number(cell.dataset.pageH) || artboardHeight
+        const cw = Math.round(snapCssPx(pw * scale))
+        const ch = Math.round(snapCssPx(ph * scale))
+        cell.style.width = `${cw}px`
+        cell.style.height = `${ch}px`
+        if (isVirtual && Number.isFinite(pageIndex)) {
+          const metrics = getLayoutCellMetrics(pageIndex)
+          if (metrics) {
+            cell.style.left = `${metrics.left}px`
+            cell.style.top = `${metrics.top}px`
+          }
+        }
+        const svg = cell.querySelector('svg')
+        if (svg) {
+          svg.setAttribute('width', String(cw))
+          svg.setAttribute('height', String(ch))
+          svg.style.width = `${cw}px`
+          svg.style.height = `${ch}px`
+          svg.style.display = 'block'
+        }
+      })
+      return
+    }
 
     const artboard = stage.querySelector('.preview-artboard')
     if (artboard) {
@@ -141,6 +534,8 @@ export function mountPreviewViewport(previewArea, options = {}) {
     }
   }
 
+  let lastAppliedContentScale = NaN
+
   function applyTransform() {
     const tx = snapCssPx(panX + swipeOffsetX)
     const ty = snapCssPx(panY)
@@ -156,9 +551,23 @@ export function mountPreviewViewport(previewArea, options = {}) {
     } else {
       layer.style.transform = `translate(${tx}px, ${ty}px)`
     }
-    applyContentSize()
+    if (lastAppliedContentScale !== scale) {
+      applyContentSize()
+      lastAppliedContentScale = scale
+    }
     notifyScale()
     notifyView()
+    notifyVisiblePageChange()
+  }
+
+  function invalidateContentSizeCache() {
+    lastAppliedContentScale = NaN
+  }
+
+  function refreshContentSize() {
+    invalidateContentSizeCache()
+    applyContentSize()
+    lastAppliedContentScale = scale
   }
 
   function setLayerTransition(on) {
@@ -206,6 +615,7 @@ export function mountPreviewViewport(previewArea, options = {}) {
     panX = cx - contentX * next
     panY = cy - contentY * next
     scale = next
+    clampPan()
     applyTransform()
   }
 
@@ -220,8 +630,11 @@ export function mountPreviewViewport(previewArea, options = {}) {
 
   function updatePanVisuals() {
     const active = isPanActive()
+    const scrollNav = isScrollNavigation()
     previewArea.classList.toggle('preview-pan-mode', active)
-    viewport.classList.toggle('preview-viewport--pan', active)
+    previewArea.classList.toggle('preview-area--scroll-nav', scrollNav)
+    viewport.classList.toggle('preview-viewport--pan', active || scrollNav)
+    viewport.classList.toggle('preview-viewport--scroll-nav', scrollNav)
   }
 
   function setPanMode(on) {
@@ -231,6 +644,7 @@ export function mountPreviewViewport(previewArea, options = {}) {
 
   function shouldPanPointer(e) {
     if (e.button === 1) return true
+    if (isScrollNavigation() && e.button === 0) return true
     if (!isPanActive() || e.button !== 0) return false
     return true
   }
@@ -254,6 +668,7 @@ export function mountPreviewViewport(previewArea, options = {}) {
     panTriggerButton = e.button
     panStart = { x: e.clientX, y: e.clientY, panX, panY }
     if (e.button === 1) notifyMiddlePanActive(true)
+    if (isScrollNavigation()) setNavigationActive(NAV_POINTER, true)
     viewport.classList.add('preview-viewport--panning')
     previewArea.classList.add('preview-area--panning')
     try {
@@ -268,6 +683,7 @@ export function mountPreviewViewport(previewArea, options = {}) {
     if (!isPanning || e.pointerId !== panPointerId) return
     panX = panStart.panX + (e.clientX - panStart.x)
     panY = panStart.panY + (e.clientY - panStart.y)
+    clampPan()
     applyTransform()
     e.preventDefault()
   }
@@ -280,6 +696,7 @@ export function mountPreviewViewport(previewArea, options = {}) {
     panTriggerButton = null
     viewport.classList.remove('preview-viewport--panning')
     previewArea.classList.remove('preview-area--panning')
+    if (isScrollNavigation()) setNavigationActive(NAV_POINTER, false)
     if (wasMiddlePan) notifyMiddlePanActive(false)
     try {
       viewport.releasePointerCapture(e.pointerId)
@@ -296,27 +713,49 @@ export function mountPreviewViewport(previewArea, options = {}) {
     applyTransform()
   }
 
-  function fitView() {
+  function fitView(options = {}) {
     if (!slot.querySelector('.preview-stage')) {
       resetView()
       fitScaleCache = scale
       return
     }
+    const anchorPage = options.anchorPageIndex ?? (isScrollNavigation() ? getVisiblePageIndex() : null)
     const vw = viewport.clientWidth
     const vh = viewport.clientHeight
     if (vw < 2 || vh < 2) return
-    const pad = 24
-    const fitScale = clampZoom(
-      Math.min((vw - pad) / baseWidth, (vh - pad) / baseHeight),
-    )
+    const pad = VIEW_PAD
+    let fitScale
+    if (navigationMode === 'multi-v') {
+      fitScale = clampZoom((vw - pad) / baseWidth)
+    } else if (navigationMode === 'multi-h') {
+      fitScale = clampZoom((vh - pad) / baseHeight)
+    } else {
+      fitScale = clampZoom(
+        Math.min((vw - pad) / baseWidth, (vh - pad) / baseHeight),
+      )
+    }
     scale = fitScale
-    panX = (vw - baseWidth * scale) / 2
-    panY = (vh - baseHeight * scale) / 2
     rotation = 0
     viewport.scrollTop = 0
     viewport.scrollLeft = 0
+    if (navigationMode === 'multi-v') {
+      panX = (vw - baseWidth * scale) / 2
+      panY = SCROLL_PAD
+    } else if (navigationMode === 'multi-h') {
+      panX = SCROLL_PAD
+      panY = (vh - baseHeight * scale) / 2
+    } else {
+      panX = (vw - baseWidth * scale) / 2
+      panY = (vh - baseHeight * scale) / 2
+    }
+    clampPan()
     fitScaleCache = scale
+    suppressVisiblePageNotify = true
     applyTransform()
+    requestAnimationFrame(() => {
+      suppressVisiblePageNotify = false
+      if (anchorPage != null) scrollPageIntoView(anchorPage)
+    })
   }
 
   let scheduleFitRaf1 = 0
@@ -384,6 +823,7 @@ export function mountPreviewViewport(previewArea, options = {}) {
       slot.removeChild(slot.firstChild)
     }
     if (node) slot.appendChild(node)
+    invalidateContentSizeCache()
     applyTransform()
   }
 
@@ -412,6 +852,22 @@ export function mountPreviewViewport(previewArea, options = {}) {
     'wheel',
     (e) => {
       if (!slot.querySelector('.preview-stage')) return
+
+      if (isScrollNavigation() && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault()
+        bumpWheelNavigation()
+        if (navigationMode === 'multi-v') {
+          panY -= e.deltaY
+          if (Math.abs(e.deltaX) > 0.5) panX -= e.deltaX
+        } else {
+          const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY
+          panX -= delta
+        }
+        clampPan()
+        applyTransform()
+        return
+      }
+
       e.preventDefault()
       const step = e.deltaY < 0 ? WHEEL_ZOOM_FACTOR : 1 / WHEEL_ZOOM_FACTOR
       if (!pendingWheel) {
@@ -512,6 +968,7 @@ export function mountPreviewViewport(previewArea, options = {}) {
       scale = nextScale
       panX = cx - ux * nextScale
       panY = cy - uy * nextScale
+      clampPan()
       applyTransform()
     }
 
@@ -528,6 +985,7 @@ export function mountPreviewViewport(previewArea, options = {}) {
     }
 
     function initialTouchMode() {
+      if (isScrollNavigation()) return 'pan'
       if (!isPageSwipeEnabled()) return 'pan'
       return isViewTransformed() ? 'pan' : 'swipe'
     }
@@ -637,8 +1095,10 @@ export function mountPreviewViewport(previewArea, options = {}) {
         e.preventDefault()
         touchGesture.mode = 'pan'
         previewArea.classList.remove('preview-area--page-swiping', 'preview-area--touch-rotating')
+        if (isScrollNavigation()) setNavigationActive(NAV_TOUCH, true)
         panX = (touchGesture.startPanX ?? panX) + dx
         panY = (touchGesture.startPanY ?? panY) + dy
+        clampPan()
         applyTransform()
       }
     }, { passive: false })
@@ -658,6 +1118,7 @@ export function mountPreviewViewport(previewArea, options = {}) {
       }
       if (e.touches.length > 0) return
       previewArea.classList.remove('preview-area--page-swiping', 'preview-area--touch-rotating')
+      if (isScrollNavigation()) setNavigationActive(NAV_TOUCH, false)
       if (touchGesture.mode === 'swipe' && isPageSwipeEnabled() && !isViewTransformed()) {
         const dx = swipeOffsetX
         const dy = (e.changedTouches[0]?.clientY ?? 0) - (touchGesture.startY ?? 0)
@@ -698,13 +1159,37 @@ export function mountPreviewViewport(previewArea, options = {}) {
     pageWidthMm = w
     pageHeightMm = h
     recomputeBaseDimensions()
+    invalidateContentSizeCache()
     applyContentSize()
+    lastAppliedContentScale = scale
+  }
+
+  /** 多页预览时覆盖内容区总尺寸；传 null 恢复单页尺寸 */
+  function setContentBounds(width, height) {
+    if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+      contentBoundsOverride = { width, height }
+    } else {
+      contentBoundsOverride = null
+    }
+    recomputeBaseDimensions()
+    invalidateContentSizeCache()
+    applyContentSize()
+    lastAppliedContentScale = scale
   }
 
   return {
     setContent,
     setPanMode,
     getPanMode: () => panMode,
+    setNavigationMode,
+    scrollPageIntoView,
+    animateScrollToPage,
+    cancelPageScrollAnimation,
+    getVisiblePageIndex,
+    getVisiblePageIndices,
+    isNavigationActive: () => navActiveMask !== 0,
+    isPageScrollAnimating: () => (navActiveMask & NAV_PAGE_SCROLL) !== 0,
+    refreshContentSize,
     zoomIn: () => zoomByFactor(WHEEL_ZOOM_FACTOR),
     zoomOut: () => zoomByFactor(1 / WHEEL_ZOOM_FACTOR),
     resetView,
@@ -714,6 +1199,8 @@ export function mountPreviewViewport(previewArea, options = {}) {
     getViewState,
     setViewState,
     setPageAspectRatio,
+    setContentBounds,
+    setPageLayoutGetter,
     getWorkspacePaddingMm: () => workspacePaddingMm,
   }
 }
