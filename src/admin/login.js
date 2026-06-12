@@ -8,10 +8,10 @@ form?.addEventListener('submit', async (e) => {
   errEl.textContent = ''
   const username = document.getElementById('login-username').value.trim()
   const password = document.getElementById('login-password').value
+  const params = new URLSearchParams(window.location.search)
+  const next = params.get('next') || '/admin.html'
   try {
-    await api.login(username, password)
-    const params = new URLSearchParams(window.location.search)
-    const next = params.get('next') || '/admin.html'
+    await api.login(username, password, { next })
     window.location.href = next
   } catch (err) {
     errEl.textContent = err.message || '登录失败'

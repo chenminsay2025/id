@@ -40,6 +40,7 @@ import {
   formatPublicSessionForClient,
 } from './auth.js'
 import { checkLoginRateLimit, clearLoginRateLimit, getClientIp } from './rateLimit.js'
+import { logVisitorActivity } from './visitorTracking.js'
 
 function nowIso() {
   return new Date().toISOString()
@@ -328,6 +329,20 @@ export function registerAdminManageRoutes(app, { db, secret, requireAuth, requir
       return c.json({ error: '该账号未分配可查看的组' }, 403)
     }
     const token = await signSession({ sub: String(visitor.id), typ: 'visitor' }, secret)
+    logVisitorActivity(db, {
+      activityType: 'visitor_login',
+      visitorId: visitor.id,
+      visitorName: visitor.username,
+      ipAddress: ip,
+      userAgent: c.req.header('user-agent') || '',
+      referrer: c.req.header('referer') || '',
+      details: {
+        scope: 'public',
+        username: visitor.username,
+        page_url: String(body.page_url || body.pageUrl || c.req.header('referer') || '').slice(0, 500),
+        next: String(body.next || '').slice(0, 200),
+      },
+    })
     c.header('Set-Cookie', sessionCookie(token, 60 * 60 * 24 * 7, getVisitorCookieName()))
     return c.json({ ok: true, visitor: formatVisitorForClient(principal) })
   })

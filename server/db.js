@@ -244,6 +244,13 @@ function runMigrations(db) {
     }
   })
 
+  // v10: 访客活动 — IP + 时间索引（分页/轨迹查询）
+  applyMigration(db, 10, (db) => {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_activity_ip_time ON visitor_activity_log(ip_address, created_at);
+    `)
+  })
+
   // 向后兼容：如果数据库已有这些表但没有 migrations 记录，
   // 检测并把所有版本标记为已应用（避免对已有数据库重复执行）
   backfillMigrationVersions(db)

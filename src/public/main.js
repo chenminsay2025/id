@@ -3809,7 +3809,7 @@ async function runExportSvg() {
       message: `已保存：${filename}`,
     })
     setExportStatus('SVG 已导出', 0)
-    trackActivity('svg_download')
+    trackActivity('svg_download', { details: buildExportTrackDetails('single', filename, selectedRow) })
   } catch (err) {
     markExportFailed(err)
   } finally {
@@ -3848,7 +3848,7 @@ async function runExportPdf() {
       message: `已保存：${filename}`,
     })
     setExportStatus('PDF 已导出', 0)
-    trackActivity('pdf_download')
+    trackActivity('pdf_download', { details: buildExportTrackDetails('single', filename, selectedRow) })
   } catch (err) {
     markExportFailed(err)
   } finally {
@@ -3881,7 +3881,9 @@ async function runExportBatch() {
       message: `已保存 ${rows.length} 页：${filename}`,
     })
     setExportStatus(`已导出 ${rows.length} 页 PDF`, 0)
-    trackActivity('pdf_download', { details: { mode: 'batch_merge', pages: rows.length } })
+    trackActivity('pdf_download', {
+      details: buildExportTrackDetails('batch_merge', filename, null, { pages: rows.length }),
+    })
   } catch (err) {
     markExportFailed(err)
   } finally {
@@ -3926,7 +3928,9 @@ async function runExportBatchSplit() {
       message: `已打包 ${rows.length} 个 PDF：${zipBasename}.zip`,
     })
     setExportStatus(`已导出 ${rows.length} 个 PDF（ZIP）`, 0)
-    trackActivity('pdf_download', { details: { mode: 'batch_split', pages: rows.length } })
+    trackActivity('pdf_download', {
+      details: buildExportTrackDetails('batch_split', `${zipBasename}.zip`, null, { pages: rows.length }),
+    })
   } catch (err) {
     markExportFailed(err)
   } finally {
@@ -4072,6 +4076,27 @@ let trackPageEnteredAt = Date.now()
 let trackCertId = null
 let trackCertTitle = ''
 
+function buildTrackPageContext(extra = {}) {
+  return {
+    url: window.location.href,
+    path: `${window.location.pathname}${window.location.search}${window.location.hash}`,
+    title: document.title,
+    ...extra,
+  }
+}
+
+function buildExportTrackDetails(mode, filename, rowIndex = null, extra = {}) {
+  return buildTrackPageContext({
+    mode,
+    filename,
+    row_index: rowIndex,
+    page_label: rowIndex != null ? getPageNavRowLabel(rowIndex) : null,
+    cert_id: trackCertId,
+    cert_title: trackCertTitle,
+    ...extra,
+  })
+}
+
 function trackActivity(activityType, opts = {}) {
   const payload = {
     activity_type: activityType,
@@ -4079,7 +4104,7 @@ function trackActivity(activityType, opts = {}) {
     cert_title: trackCertTitle || (opts.cert_title || ''),
     duration_seconds: opts.duration_seconds ?? 0,
     referrer: document.referrer || '',
-    details: opts.details ? JSON.stringify(opts.details) : '{}',
+    details: opts.details ?? {},
   }
   // 卸载时用 sendBeacon 确保送达
   if (opts.beacon && navigator.sendBeacon) {
@@ -4095,21 +4120,8 @@ function trackActivity(activityType, opts = {}) {
   }).catch(() => { /* 追踪失败不影响主功能 */ })
 }
 
-// 记录一次公开页访问（即使未点开证书也有数据）
 function trackPageVisit() {
-  fetch('/api/track', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      activity_type: 'page_visit',
-      cert_id: null,
-      cert_title: '',
-      duration_seconds: 0,
-      referrer: document.referrer || '',
-      details: JSON.stringify({ path: window.location.pathname }),
-    }),
-    keepalive: true,
-  }).catch(() => {})
+  trackActivity('page_visit', { details: buildTrackPageContext() })
 }
 trackPageVisit()
 
@@ -4118,7 +4130,7 @@ function setTrackingCert(cert) {
   trackCertTitle = cert?.title || ''
   trackPageEnteredAt = Date.now()
   if (trackCertId) {
-    trackActivity('page_view')
+    trackActivity('page_view', { details: buildTrackPageContext() })
   }
 }
 
@@ -4126,7 +4138,11 @@ function trackDuration() {
   if (!trackCertId) return
   const sec = Math.round((Date.now() - trackPageEnteredAt) / 1000)
   if (sec < 1) return
-  trackActivity('page_view', { duration_seconds: sec, beacon: true })
+  trackActivity('page_view', {
+    duration_seconds: sec,
+    beacon: true,
+    details: buildTrackPageContext(),
+  })
 }
 
 // 页面关闭/隐藏时上报停留时长

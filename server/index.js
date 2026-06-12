@@ -135,7 +135,7 @@ import { checkLoginRateLimit, clearLoginRateLimit, getClientIp } from './rateLim
 import { syncLayoutPresetsForTableColumnChanges } from './tableTemplateColumnSync.js'
 import { registerCertificateRoutes } from './routes/certificates.js'
 import { registerPublicRoutes } from './routes/public.js'
-import { registerTrackingRoutes } from './visitorTracking.js'
+import { registerTrackingRoutes, logVisitorActivity } from './visitorTracking.js'
 
 const PORT = Number(process.env.PORT || 3003)
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-change-me-in-production'
@@ -502,6 +502,20 @@ app.post('/api/auth/login', async (c) => {
       { sub: String(user.id), username: user.username, typ: 'admin' },
       JWT_SECRET,
     )
+    logVisitorActivity(db, {
+      activityType: 'admin_login',
+      visitorName: user.username,
+      ipAddress: ip,
+      userAgent: c.req.header('user-agent') || '',
+      referrer: c.req.header('referer') || '',
+      details: {
+        scope: 'admin',
+        username: user.username,
+        role: user.role,
+        page_url: String(body.page_url || body.pageUrl || c.req.header('referer') || '').slice(0, 500),
+        next: String(body.next || '').slice(0, 200),
+      },
+    })
     c.header('Set-Cookie', sessionCookie(token))
     return c.json({ ok: true, user: formatUserForClient(principal) })
   } catch (err) {

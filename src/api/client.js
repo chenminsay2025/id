@@ -206,9 +206,9 @@ function runWithRestoreProgressPoll(onProgress, runRequest) {
 export const api = {
   health: () => request('/api/health'),
   me: () => request('/api/auth/me'),
-  login: (username, password) => request('/api/auth/login', {
+  login: (username, password, extra = {}) => request('/api/auth/login', {
     method: 'POST',
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ username, password, page_url: window.location.href, ...extra }),
   }),
   logout: () => request('/api/auth/logout', { method: 'POST' }),
   getProfile: () => request('/api/auth/profile'),
@@ -241,9 +241,9 @@ export const api = {
   updateVisitorUser: (id, body) => request(`/api/visitor-users/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
   deleteVisitorUser: (id) => request(`/api/visitor-users/${id}`, { method: 'DELETE' }),
 
-  publicLogin: (username, password) => request('/api/public/auth/login', {
+  publicLogin: (username, password, extra = {}) => request('/api/public/auth/login', {
     method: 'POST',
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ username, password, page_url: window.location.href, ...extra }),
   }),
   publicLogout: () => request('/api/public/auth/logout', { method: 'POST' }),
   publicMe: () => request('/api/public/auth/me'),

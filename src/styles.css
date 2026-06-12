@@ -15663,6 +15663,11 @@ body.layout-collapsible-reorder-active * {
   margin: 0 0 14px 0;
   color: #374151;
 }
+.va-section-hint {
+  font-size: 12px;
+  font-weight: 400;
+  color: #9ca3af;
+}
 .va-chart-legend {
   display: flex;
   gap: 16px;
@@ -15729,13 +15734,13 @@ body.layout-collapsible-reorder-active * {
 }
 
 /* 表格 */
-.va-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 24px;
+.va-retention-hint {
+  margin: -8px 0 16px;
+  font-size: 12px;
+  color: #6b7280;
 }
-@media (max-width: 860px) {
-  .va-grid { grid-template-columns: 1fr; }
+.va-section--full {
+  width: 100%;
 }
 .va-table-wrap {
   background: #fff;
@@ -15743,6 +15748,247 @@ body.layout-collapsible-reorder-active * {
   border-radius: 10px;
   overflow: auto;
   max-height: 480px;
+}
+.va-table-wrap--wide {
+  max-height: none;
+}
+.va-table--recent .va-cell-title,
+.va-table--trails .va-cell-path {
+  max-width: none;
+  white-space: normal;
+}
+.va-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 12px;
+  padding: 8px 0;
+}
+.va-pager-info {
+  font-size: 13px;
+  color: #6b7280;
+}
+.va-ip-location {
+  font-size: 12px;
+  color: #2563eb;
+  background: #eff6ff;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.va-cell-path {
+  font-size: 12px;
+  color: #4b5563;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.va-cell-action {
+  width: 88px;
+  text-align: right;
+}
+.va-trail-toggle {
+  font-size: 12px;
+  color: #2563eb;
+  cursor: pointer;
+}
+.va-trail-row {
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.va-trail-row:hover,
+.va-trail-row.is-expanded {
+  background: #f8fafc;
+}
+.va-trail-row.is-expanded .va-trail-toggle {
+  font-weight: 600;
+}
+.va-trail-detail-row td {
+  padding: 0 !important;
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+}
+.va-trail-detail-inner {
+  padding: 16px 20px 20px;
+}
+.va-trail-detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+.va-trail-detail-path {
+  color: #6b7280;
+  font-size: 12px;
+}
+/* 51.la 风格竖向轨迹 */
+.va-51-path {
+  position: relative;
+  padding-left: 4px;
+}
+.va-51-node {
+  display: grid;
+  grid-template-columns: 148px 28px 1fr;
+  gap: 0 12px;
+  min-height: 56px;
+}
+.va-51-node-time {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: #6b7280;
+  padding-top: 2px;
+  text-align: right;
+}
+.va-51-node-rail {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.va-51-node-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #6366f1;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 2px #6366f1;
+  flex-shrink: 0;
+  z-index: 1;
+}
+.va-51-node--last .va-51-node-dot {
+  background: #10b981;
+  box-shadow: 0 0 0 2px #10b981;
+}
+.va-51-node-line {
+  flex: 1;
+  width: 2px;
+  background: linear-gradient(#c7d2fe, #e5e7eb);
+  margin-top: 2px;
+  min-height: 24px;
+}
+.va-51-node-body {
+  padding-bottom: 12px;
+}
+.va-51-node-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: #111827;
+  line-height: 1.4;
+}
+.va-51-node-meta {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #6b7280;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.va-cell-location {
+  color: #2563eb;
+  white-space: nowrap;
+}
+.va-cell-ip {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.va-page-url {
+  color: #2563eb;
+  text-decoration: none;
+  word-break: break-all;
+}
+.va-page-url:hover {
+  text-decoration: underline;
+}
+.va-page-url--sm {
+  font-size: 12px;
+}
+.va-cell-url {
+  min-width: 200px;
+  max-width: 420px;
+  word-break: break-all;
+}
+.va-detail-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+}
+.va-detail-btn-hint {
+  font-size: 11px;
+  color: #2563eb;
+  text-decoration: underline;
+}
+.va-detail-btn:hover .va-detail-btn-hint {
+  color: #1d4ed8;
+}
+.va-51-node-url {
+  margin-top: 4px;
+}
+.va-event-dialog {
+  border: none;
+  border-radius: 12px;
+  padding: 0;
+  max-width: 520px;
+  width: calc(100% - 32px);
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.2);
+}
+.va-event-dialog::backdrop {
+  background: rgba(15, 23, 42, 0.35);
+}
+.va-event-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid #e5e7eb;
+}
+.va-event-dialog-head h4 {
+  margin: 0;
+  font-size: 15px;
+}
+.va-event-dialog-close {
+  border: none;
+  background: none;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  color: #6b7280;
+}
+.va-event-detail-list {
+  margin: 0;
+  padding: 12px 16px 16px;
+  max-height: 60vh;
+  overflow: auto;
+}
+.va-event-detail-row {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 8px 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid #f3f4f6;
+  font-size: 13px;
+}
+.va-event-detail-row:last-child {
+  border-bottom: none;
+}
+.va-event-detail-row dt {
+  margin: 0;
+  color: #6b7280;
+}
+.va-event-detail-row dd {
+  margin: 0;
+  color: #111827;
+  word-break: break-all;
 }
 .va-table {
   width: 100%;
@@ -15787,11 +16033,6 @@ body.layout-collapsible-reorder-active * {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.va-cell-ip {
-  font-size: 12px;
-  color: #9ca3af;
-  font-family: monospace;
 }
 
 /* 活动徽章 */
